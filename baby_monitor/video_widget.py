@@ -222,8 +222,9 @@ class VideoWidget(QWidget):
             self._video_frame.show()
             QApplication.processEvents()
 
-            wid = int(self._video_frame.winId())
-            logger.info("mpv WID: %s, URL: %s", hex(wid), self.stream_url[:60])
+            from config import load_config
+            cfg = load_config()
+            timeout = cfg.get("network_timeout_seconds", 15)
 
             cmd = [
                 MPV_PATH,
@@ -238,7 +239,7 @@ class VideoWidget(QWidget):
                 "--demuxer-max-bytes=10M",             # 降低缓冲区大小（默认50M）
                 "--demuxer-readahead-secs=0.5",        # 降低预读秒数
                 "--stream-buffer-size=32KiB",          # 降低流输入缓存区大小加快出图
-                "--network-timeout=5",                 # 设置5秒网络超时
+                f"--network-timeout={timeout}",         # 自定义网络连接超时
                 self.stream_url,
             ]
 

@@ -18,6 +18,7 @@ DEFAULT_CONFIG = {
     "api_base_url": "https://videoapiv4.hyzhihuixing.com",
     "recording_path": str(RECORDINGS_DIR),
     "recording_segment_minutes": 5,  # 默认录像分割时长：5分钟
+    "network_timeout_seconds": 15,    # 默认网络超时时间：15秒
     "remember_password": False,
     "phone": "",
     "password_encrypted": "",

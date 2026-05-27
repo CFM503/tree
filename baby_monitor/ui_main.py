@@ -867,7 +867,7 @@ class SettingsDialog(QDialog):
 
     def _init_ui(self):
         self.setWindowTitle("系统设置")
-        self.setFixedSize(450, 240)
+        self.setFixedSize(450, 290)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         self.setStyleSheet("""
             QDialog {
@@ -958,6 +958,21 @@ class SettingsDialog(QDialog):
         segment_layout.addStretch()
         layout.addLayout(segment_layout)
 
+        # 3. 网络连接超时时长
+        timeout_layout = QHBoxLayout()
+        timeout_label = QLabel("网络连接超时时长:")
+        timeout_layout.addWidget(timeout_label)
+
+        self.timeout_spin = QSpinBox()
+        self.timeout_spin.setRange(3, 120)  # 支持 3 秒到 120 秒
+        self.timeout_spin.setSuffix(" 秒")
+        current_timeout = self.config_dict.get("network_timeout_seconds", 15)
+        self.timeout_spin.setValue(current_timeout)
+        self.timeout_spin.setFixedWidth(100)
+        timeout_layout.addWidget(self.timeout_spin)
+        timeout_layout.addStretch()
+        layout.addLayout(timeout_layout)
+
         # 分割线
         line = QFrame()
         line.setFrameShape(QFrame.HLine)
@@ -999,6 +1014,7 @@ class SettingsDialog(QDialog):
     def _on_save(self):
         new_path = self.path_input.text().strip()
         new_minutes = self.segment_spin.value()
+        new_timeout = self.timeout_spin.value()
 
         if not new_path:
             QMessageBox.warning(self, "警告", "录像保存路径不能为空")
@@ -1014,6 +1030,7 @@ class SettingsDialog(QDialog):
         # 保存到配置
         self.config_dict["recording_path"] = new_path
         self.config_dict["recording_segment_minutes"] = new_minutes
+        self.config_dict["network_timeout_seconds"] = new_timeout
 
         from config import save_config
         save_config(self.config_dict)
