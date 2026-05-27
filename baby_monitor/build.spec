@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller 打包配置 - 掌通家园监控"""
+"""PyInstaller 打包配置 - 猴子看护"""
 
 import os
 import imageio_ffmpeg
@@ -14,6 +14,8 @@ a = Analysis(
     pathex=[],
     binaries=[
         (ffmpeg_path, 'imageio_ffmpeg/binaries'),
+        ('mpg/mpv.exe', 'mpg'),
+        ('mpg/d3dcompiler_43.dll', 'mpg'),
     ],
     datas=[],
     hiddenimports=[
@@ -49,13 +51,16 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 exe = EXE(
     pyz,
     a.scripts,
-    [],
-    exclude_binaries=True,
-    name='掌通家园监控',
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    name='猴子看护',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
+    upx_exclude=[],
+    runtime_tmpdir=None,
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -63,15 +68,4 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=None,
-)
-
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    strip=False,
-    upx=True,
-    upx_exclude=[],
-    name='掌通家园监控',
 )

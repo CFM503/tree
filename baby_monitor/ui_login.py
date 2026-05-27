@@ -50,7 +50,7 @@ class LoginDialog(QDialog):
         return self.phone_input.text().strip(), self.pwd_input.text()
 
     def _init_ui(self):
-        self.setWindowTitle("掌通家园 - 登录")
+        self.setWindowTitle("猴子看护 - 登录")
         self.setFixedSize(400, 320)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
 
@@ -58,7 +58,7 @@ class LoginDialog(QDialog):
         layout.setSpacing(12)
         layout.setContentsMargins(30, 20, 30, 20)
 
-        title = QLabel("掌通家园 宝宝监控")
+        title = QLabel("猴子看护 宝宝监控")
         title.setAlignment(Qt.AlignCenter)
         title.setFont(QFont("Microsoft YaHei", 18, QFont.Bold))
         title.setStyleSheet("color: #0078d4; margin-bottom: 5px;")

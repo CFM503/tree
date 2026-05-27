@@ -1,4 +1,4 @@
-"""掌通家园监控查看器 - 主程序入口 (v1.7)"""
+"""猴子看护 - 主程序入口 (v1.7)"""
 import os
 import sys
 import logging
@@ -24,7 +24,7 @@ def main():
     os.environ.setdefault("QT_AUTO_SCREEN_SCALE_FACTOR", "1")
 
     app = QApplication(sys.argv)
-    app.setApplicationName("掌通家园监控")
+    app.setApplicationName("猴子看护")
 
     from ui_login import LoginDialog
     from ui_main import MainWindow

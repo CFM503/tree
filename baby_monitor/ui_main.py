@@ -338,7 +338,7 @@ class MainWindow(QMainWindow):
         self._init_ui()
 
     def _init_ui(self):
-        self.setWindowTitle("掌通家园 - 宝宝监控")
+        self.setWindowTitle("猴子看护")
         self.setMinimumSize(1024, 700)
         self.resize(1280, 800)
 
