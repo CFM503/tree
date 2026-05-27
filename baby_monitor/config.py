@@ -1,0 +1,57 @@
+"""配置管理模块"""
+import os
+import json
+import base64
+from pathlib import Path
+
+APP_DIR = Path(__file__).parent
+CONFIG_FILE = APP_DIR / "config.json"
+RECORDINGS_DIR = APP_DIR / "recordings"
+RECORDINGS_DIR.mkdir(exist_ok=True)
+
+DEFAULT_CONFIG = {
+    "api_base_url": "https://videoapiv4.hyzhihuixing.com",
+    "recording_path": str(RECORDINGS_DIR),
+    "remember_password": False,
+    "phone": "",
+    "password_encrypted": "",
+    "last_cameras": [],
+    "window_geometry": None,
+}
+
+
+def _simple_encrypt(text: str) -> str:
+    """Simple base64 obfuscation for local password storage (not security-critical)."""
+    return base64.b64encode(text.encode("utf-8")).decode("ascii")
+
+
+def _simple_decrypt(encoded: str) -> str:
+    try:
+        return base64.b64decode(encoded.encode("ascii")).decode("utf-8")
+    except Exception:
+        return ""
+
+
+def load_config() -> dict:
+    cfg = dict(DEFAULT_CONFIG)
+    if CONFIG_FILE.exists():
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                saved = json.load(f)
+            cfg.update(saved)
+        except Exception:
+            pass
+    return cfg
+
+
+def save_config(cfg: dict):
+    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, ensure_ascii=False, indent=2)
+
+
+def get_password(cfg: dict) -> str:
+    return _simple_decrypt(cfg.get("password_encrypted", ""))
+
+
+def set_password(cfg: dict, password: str):
+    cfg["password_encrypted"] = _simple_encrypt(password)

@@ -1,0 +1,28 @@
+# mpv portable (user placed)
+mpg/
+
+# Build output
+build/
+dist/
+*.spec.bak
+
+# Python
+__pycache__/
+*.pyc
+
+# Data files
+*.log
+*.json
+!requirements.txt
+
+# Recordings
+recordings/
+
+# APK
+*.apk
+
+# Screenshots
+*.png
+
+# Captured traffic
+captured_requests.log
