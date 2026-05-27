@@ -757,7 +757,7 @@ class MainWindow(QMainWindow):
             self._switch_to_grid()
 
     def _on_camera_play(self, index: int):
-        """从摄像头列表请求播放"""
+        """从摄像头列表请求播放：单画面模式推送到当前单画面，多画面模式推送到第一格"""
         if index >= len(self.cameras):
             return
         cam = self.cameras[index]
@@ -766,13 +766,20 @@ class MainWindow(QMainWindow):
         if not url or cam.get("Status", 0) != 1 or cam.get("authority", 0) != 1:
             QMessageBox.information(self, "提示", f"摄像头 {name} 离线或无权限")
             return
-        if index < len(self._video_widgets):
-            self._video_widgets[index].play(url)
+
+        # 判断当前模式，决定推送到哪个播放窗口
+        if not self._grid_mode:
+            # 单画面模式：推送到当前展示的这一格
+            target_index = self._current_single_index
         else:
-            self._switch_to_single(0)
-            self._video_widgets[0].stop()
-            self._video_widgets[0].set_camera(name, url, True)
-            self._video_widgets[0].play(url)
+            # 多画面或6格模式：推送到第一格
+            target_index = 0
+
+        if target_index < len(self._video_widgets):
+            target_vw = self._video_widgets[target_index]
+            target_vw.stop()
+            target_vw.set_camera(name, url, True)
+            target_vw.play(url)
 
     def _on_recording_stopped(self, camera_name: str, file_path: str):
         """录像停止后刷新录像列表"""
