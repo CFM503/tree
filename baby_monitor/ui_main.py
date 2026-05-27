@@ -499,7 +499,7 @@ class MainWindow(QMainWindow):
         self._status_bar.showMessage("请选择宝宝")
 
         # 软件版本号
-        self._status_version = QLabel("v2.2")
+        self._status_version = QLabel("v2.2-stable")
         self._status_version.setStyleSheet("color: #777; margin-right: 15px; font-weight: bold;")
         self._status_bar.addPermanentWidget(self._status_version)
 
