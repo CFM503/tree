@@ -376,7 +376,7 @@ class VideoWidget(QWidget):
                 '-i', self.stream_url,
                 '-c', 'copy',
                 self._recording_path,
-            ], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, startupinfo=startupinfo)
+            ], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, startupinfo=startupinfo)
             return True
         except Exception as e:
             logger.error("启动 ffmpeg 失败: %s", e)
