@@ -498,12 +498,14 @@ class VideoWidget(QWidget):
         if not self.is_playing or not self.stream_url:
             return
 
-        from config import RECORDINGS_DIR
+        from config import load_config, RECORDINGS_DIR
+        cfg = load_config()
+        save_dir = Path(cfg.get("recording_path", str(RECORDINGS_DIR)))
         import random, string
         rand = ''.join(random.choices(string.ascii_lowercase + string.digits, k=4))
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"SNAP_{timestamp}_{rand}.jpg"
-        snapshot_path = str(RECORDINGS_DIR / filename)
+        snapshot_path = str(save_dir / filename)
 
         try:
             import imageio_ffmpeg
