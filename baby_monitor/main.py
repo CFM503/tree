@@ -1,4 +1,4 @@
-"""掌通家园监控查看器 - 主程序入口 (v1.6)"""
+"""掌通家园监控查看器 - 主程序入口 (v1.7)"""
 import os
 import sys
 import logging

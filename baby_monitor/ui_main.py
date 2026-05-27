@@ -185,27 +185,49 @@ class LoadCamerasThread(QThread):
             )
             cameras = self.client.get_camera_list()
 
-            # 检查权限
-            for cam in cameras:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            # 1. 并发获取每个摄像头的权限
+            def fetch_authority(cam):
                 cam["authority"] = 0
                 try:
                     auth = self.client.get_camera_authority(
                         camera_sn=cam.get("ZhsCarameSn", ""))
                     cam["authority"] = auth.get("data", {}).get("authority", 0)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("并发获取权限失败 [%s]: %s", cam.get("ChannelName", ""), e)
+                return cam
 
-            # 获取有权限摄像头的流URL
+            if cameras:
+                max_workers = min(len(cameras), 8)
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    futures = [executor.submit(fetch_authority, cam) for cam in cameras]
+                    for future in as_completed(futures):
+                        pass
+
+            # 2. 并发获取有权限摄像头的流URL
             authorized = [c for c in cameras if c.get("authority") == 1]
             if authorized:
-                try:
-                    urls = self.client.get_all_stream_urls(authorized)
-                    for cam in authorized:
-                        name = cam.get("ChannelName", "")
-                        if name in urls:
-                            cam["stream_url"] = urls[name]
-                except Exception as e:
-                    logger.warning("获取流地址失败: %s", e)
+                def fetch_stream_url(cam):
+                    if cam.get("Status") != 1:
+                        return cam
+                    device_code = cam.get("DeviceCode", "")
+                    channel_no = cam.get("ChannelNo", 1)
+                    name = cam.get("ChannelName", "")
+                    try:
+                        url = self.client.get_stream_url(device_code, channel_no, protocol=2, quality=1)
+                        if url:
+                            cam["stream_url"] = url
+                            logger.info("并发获取流地址: %s -> %s...", name, url[:60])
+                    except Exception as e:
+                        logger.error("并发获取流地址失败 [%s]: %s", name, e)
+                    return cam
+
+                max_workers_url = min(len(authorized), 8)
+                with ThreadPoolExecutor(max_workers=max_workers_url) as executor:
+                    futures = [executor.submit(fetch_stream_url, cam) for cam in authorized]
+                    for future in as_completed(futures):
+                        pass
 
             self.finished.emit(cameras)
         except Exception as e:

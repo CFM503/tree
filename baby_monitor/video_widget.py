@@ -234,8 +234,11 @@ class VideoWidget(QWidget):
                 "--hwdec=auto",
                 "--vo=gpu",
                 "--ao=null",
-                "--cache=yes",
-                "--demuxer-max-bytes=50M",
+                "--cache=no",                         # 禁用缓存以实现最低延迟直播播放
+                "--demuxer-max-bytes=10M",             # 降低缓冲区大小（默认50M）
+                "--demuxer-readahead-secs=0.5",        # 降低预读秒数
+                "--stream-buffer-size=32KiB",          # 降低流输入缓存区大小加快出图
+                "--network-timeout=5",                 # 设置5秒网络超时
                 self.stream_url,
             ]
 
