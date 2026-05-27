@@ -498,6 +498,11 @@ class MainWindow(QMainWindow):
         self.setStatusBar(self._status_bar)
         self._status_bar.showMessage("请选择宝宝")
 
+        # 软件版本号
+        self._status_version = QLabel("v2.0")
+        self._status_version.setStyleSheet("color: #777; margin-right: 15px; font-weight: bold;")
+        self._status_bar.addPermanentWidget(self._status_version)
+
         self._status_cam_count = QLabel("")
         self._status_cam_count.setStyleSheet("color: #aaa; margin-right: 15px;")
         self._status_bar.addPermanentWidget(self._status_cam_count)
