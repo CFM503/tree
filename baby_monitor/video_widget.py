@@ -222,6 +222,9 @@ class VideoWidget(QWidget):
             self._video_frame.show()
             QApplication.processEvents()
 
+            wid = int(self._video_frame.winId())
+            logger.info("mpv WID: %s, URL: %s", hex(wid), self.stream_url[:60])
+
             from config import load_config
             cfg = load_config()
             timeout = cfg.get("network_timeout_seconds", 15)
