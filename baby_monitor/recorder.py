@@ -94,7 +94,7 @@ class FFmpegRecorder:
         # 生成文件名
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         safe_name = camera_name.replace(" ", "_").replace("/", "_").replace("\\", "_")
-        filename = f"{safe_name}_{timestamp}.mp4"
+        filename = f"{safe_name}_{timestamp}.ts"
         output_path = str(Path(output_dir) / filename)
 
         try:
@@ -105,8 +105,7 @@ class FFmpegRecorder:
                 "-i", stream_url,         # 输入流
                 "-c:v", "copy",           # 视频直接复制（不重编码）
                 "-c:a", "copy",           # 音频直接复制
-                "-f", "mp4",              # 输出格式
-                "-movflags", "+faststart", # 快速启动（支持边录边播）
+                "-f", "mpegts",           # 输出格式
                 output_path,
             ]
 
@@ -177,7 +176,8 @@ class RecordingManager:
     def scan_recordings(self) -> List[RecordingInfo]:
         """扫描录像目录，返回录像文件列表"""
         recordings = []
-        for f in sorted(self.recordings_dir.glob("*.mp4"), reverse=True):
+        files = list(self.recordings_dir.glob("*.mp4")) + list(self.recordings_dir.glob("*.ts"))
+        for f in sorted(files, key=lambda x: x.stat().st_mtime, reverse=True):
             info = RecordingInfo(
                 file_path=str(f),
                 camera_name=self._extract_camera_name(f.name),
@@ -189,7 +189,7 @@ class RecordingManager:
 
     def _extract_camera_name(self, filename: str) -> str:
         """从文件名提取摄像头名称"""
-        # 文件名格式: 摄像头名_20240101_120000.mp4
+        # 文件名格式: 摄像头名_20240101_120000.ts/.mp4
         parts = filename.rsplit("_", 3)
         if len(parts) >= 3:
             return parts[0].replace("_", " ")

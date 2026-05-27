@@ -142,8 +142,10 @@ class RecordingListWidget(QListWidget):
             recordings_dir = RECORDINGS_DIR
 
         self.clear()
+        # 支持同时扫描旧的 .mp4 和新的 .ts 录像文件
+        files = list(Path(recordings_dir).glob("REC_*.mp4")) + list(Path(recordings_dir).glob("REC_*.ts"))
         recordings = sorted(
-            Path(recordings_dir).glob("REC_*.mp4"),
+            files,
             key=lambda f: f.stat().st_mtime,
             reverse=True,
         )

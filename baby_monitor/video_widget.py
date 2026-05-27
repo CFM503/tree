@@ -353,7 +353,7 @@ class VideoWidget(QWidget):
         import random, string
         rand = ''.join(random.choices(string.ascii_lowercase + string.digits, k=4))
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"REC_{timestamp}_{rand}.mp4"
+        filename = f"REC_{timestamp}_{rand}.ts"
         return str(Path(save_dir) / filename)
 
     def _start_ffmpeg_recording(self) -> bool:
@@ -372,7 +372,6 @@ class VideoWidget(QWidget):
                 ffmpeg_path, '-y',
                 '-i', self.stream_url,
                 '-c', 'copy',
-                '-movflags', '+faststart',
                 self._recording_path,
             ], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, startupinfo=startupinfo)
             return True
