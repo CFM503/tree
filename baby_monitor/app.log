@@ -613,3 +613,8 @@
 2026-05-27 08:58:20,226 [INFO] ui_main: 权限保活心跳: 6 个摄像头
 2026-05-27 08:58:40,538 [INFO] ui_main: 录像保存: 视频27@DS-7832N-R2(B)(K38932817) -> D:\SOFT\AI\github\tree\baby_monitor\recordings\REC_20260527_085713_dsqv.ts
 2026-05-27 08:58:40,540 [INFO] video_widget: 停止录像: D:\SOFT\AI\github\tree\baby_monitor\recordings\REC_20260527_085713_dsqv.ts
+2026-05-27 09:07:14,888 [INFO] api_client: 获取appkey成功
+2026-05-27 09:07:15,516 [INFO] api_client: 登录成功: user_id=250887591, children=2
+2026-05-27 09:07:15,522 [INFO] __main__: 登录成功，共 2 个宝宝
+2026-05-27 09:07:15,665 [INFO] api_client: 请求摄像头列表: school_id=203215745, url=https://hxg.api.myenglish.com.cn/api/v4/Video/GetVideoCameraListByZhsSchoolId
+2026-05-27 09:07:16,225 [WARNING] ui_main: 摄像头加载失败: object of type 'NoneType' has no len()

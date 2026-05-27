@@ -12,7 +12,7 @@ from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QPushButton, QListWidget, QListWidgetItem, QStackedWidget,
     QStatusBar, QFrame, QMessageBox, QSizePolicy, QApplication,
-    QDialog, QFileDialog, QSpinBox
+    QDialog, QFileDialog, QSpinBox, QLineEdit
 )
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QThread, QSize
 from PyQt5.QtGui import QFont
@@ -188,6 +188,8 @@ class LoadCamerasThread(QThread):
                 child.get("school_id", 0)
             )
             cameras = self.client.get_camera_list()
+            if not cameras:
+                cameras = []
 
             from concurrent.futures import ThreadPoolExecutor, as_completed
 

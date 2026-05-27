@@ -181,8 +181,9 @@ class BBTreeClient:
         resp = requests.get(URL_CAMERA_LIST, params={"zhsSchoolId": self.school_id}, timeout=15)
         resp.raise_for_status()
         data = resp.json()
-        logger.info("摄像头API响应: Code=%s, Data长度=%d", data.get("Code", "?"), len(data.get("Data", [])) if isinstance(data, dict) else -1)
-        cameras = data.get("Data", []) if isinstance(data, dict) else data
+        data_list = (data.get("Data") or []) if isinstance(data, dict) else []
+        logger.info("摄像头API响应: Code=%s, Data长度=%d", data.get("Code", "?"), len(data_list))
+        cameras = data_list if isinstance(data, dict) else data
         if not cameras:
             logger.warning("摄像头列表为空，响应: %s", str(data)[:200])
             return []
