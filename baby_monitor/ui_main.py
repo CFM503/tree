@@ -11,7 +11,8 @@ from datetime import datetime
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QPushButton, QListWidget, QListWidgetItem, QStackedWidget,
-    QStatusBar, QFrame, QMessageBox, QSizePolicy, QApplication
+    QStatusBar, QFrame, QMessageBox, QSizePolicy, QApplication,
+    QDialog, QFileDialog, QSpinBox
 )
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QThread, QSize
 from PyQt5.QtGui import QFont
@@ -137,13 +138,16 @@ class RecordingListWidget(QListWidget):
 
     def refresh(self, recordings_dir: str = None):
         """刷新录像列表"""
-        from config import RECORDINGS_DIR
+        from config import load_config, RECORDINGS_DIR
         if recordings_dir is None:
-            recordings_dir = RECORDINGS_DIR
+            cfg = load_config()
+            recordings_dir = cfg.get("recording_path", str(RECORDINGS_DIR))
 
         self.clear()
         # 支持同时扫描旧的 .mp4 和新的 .ts 录像文件
-        files = list(Path(recordings_dir).glob("REC_*.mp4")) + list(Path(recordings_dir).glob("REC_*.ts"))
+        files = []
+        if Path(recordings_dir).exists():
+            files = list(Path(recordings_dir).glob("REC_*.mp4")) + list(Path(recordings_dir).glob("REC_*.ts"))
         recordings = sorted(
             files,
             key=lambda f: f.stat().st_mtime,
@@ -441,29 +445,17 @@ class MainWindow(QMainWindow):
         sep.setFixedHeight(24)
         tb_layout.addWidget(sep)
 
-        btn_play_all = QPushButton("▶ 全部播放")
-        btn_play_all.setFixedWidth(80)
-        btn_play_all.setStyleSheet(self._toolbar_btn_style())
-        btn_play_all.clicked.connect(self._play_all)
-        tb_layout.addWidget(btn_play_all)
-
-        btn_stop_all = QPushButton("⏹ 全部停止")
-        btn_stop_all.setFixedWidth(80)
-        btn_stop_all.setStyleSheet(self._toolbar_btn_style())
-        btn_stop_all.clicked.connect(self._stop_all)
-        tb_layout.addWidget(btn_stop_all)
-
-        sep2 = QFrame()
-        sep2.setFrameShape(QFrame.VLine)
-        sep2.setStyleSheet("color: #444; margin: 4px 6px;")
-        sep2.setFixedHeight(24)
-        tb_layout.addWidget(sep2)
-
         btn_open_dir = QPushButton("📁 录像目录")
         btn_open_dir.setFixedWidth(80)
         btn_open_dir.setStyleSheet(self._toolbar_btn_style())
         btn_open_dir.clicked.connect(self._open_recordings_dir)
         tb_layout.addWidget(btn_open_dir)
+
+        btn_settings = QPushButton("⚙️ 设置")
+        btn_settings.setFixedWidth(68)
+        btn_settings.setStyleSheet(self._toolbar_btn_style())
+        btn_settings.clicked.connect(self._open_settings)
+        tb_layout.addWidget(btn_settings)
 
         tb_layout.addStretch()
 
@@ -805,9 +797,20 @@ class MainWindow(QMainWindow):
 
     def _open_recordings_dir(self):
         """打开录像目录"""
-        from config import RECORDINGS_DIR
+        path = self.config.get("recording_path")
+        if not path:
+            from config import RECORDINGS_DIR
+            path = str(RECORDINGS_DIR)
         import subprocess
-        subprocess.Popen(f'explorer "{RECORDINGS_DIR}"')
+        subprocess.Popen(f'explorer "{path}"')
+
+    def _open_settings(self):
+        """打开设置对话框"""
+        dialog = SettingsDialog(self.config, self)
+        if dialog.exec_() == QDialog.Accepted:
+            # 刷新录像列表以匹配新路径
+            self.recording_list.refresh()
+            logger.info("保存设置并刷新录像列表")
 
     def _heartbeat_authority(self):
         """权限保活心跳：后台线程续期摄像头权限"""
@@ -846,3 +849,165 @@ class MainWindow(QMainWindow):
         self.config["window_geometry"] = self.saveGeometry().toBase64().data().decode()
         save_config(self.config)
         event.accept()
+
+
+class SettingsDialog(QDialog):
+    """系统设置对话框"""
+    def __init__(self, config_dict: dict, parent=None):
+        super().__init__(parent)
+        self.config_dict = config_dict
+        self._init_ui()
+
+    def _init_ui(self):
+        self.setWindowTitle("系统设置")
+        self.setFixedSize(450, 240)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #1e1e2e;
+                color: white;
+            }
+            QLabel {
+                color: #ddd;
+                font-size: 13px;
+            }
+            QLineEdit {
+                background-color: #2e2e3e;
+                color: white;
+                border: 1px solid #444;
+                border-radius: 4px;
+                padding: 6px 10px;
+                font-size: 12px;
+            }
+            QLineEdit:read-only {
+                color: #aaa;
+                background-color: #1a1a2a;
+            }
+            QPushButton {
+                background-color: #0078d4;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 12px;
+                font-size: 13px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #106ebe;
+            }
+            QPushButton:pressed {
+                background-color: #005a9e;
+            }
+            QSpinBox {
+                background-color: #2e2e3e;
+                color: white;
+                border: 1px solid #444;
+                border-radius: 4px;
+                padding: 4px 6px;
+                font-size: 13px;
+            }
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(16)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        # 1. 录像保存路径
+        path_layout = QVBoxLayout()
+        path_label_layout = QHBoxLayout()
+        path_label = QLabel("录像保存路径:")
+        path_label_layout.addWidget(path_label)
+        path_label_layout.addStretch()
+        path_layout.addLayout(path_label_layout)
+
+        path_input_layout = QHBoxLayout()
+        self.path_input = QLineEdit()
+        self.path_input.setReadOnly(True)
+        # 获取当前录像路径，若不存在则使用默认配置
+        from config import RECORDINGS_DIR
+        current_path = self.config_dict.get("recording_path", str(RECORDINGS_DIR))
+        self.path_input.setText(current_path)
+        path_input_layout.addWidget(self.path_input)
+
+        btn_browse = QPushButton("浏览...")
+        btn_browse.setFixedWidth(80)
+        btn_browse.clicked.connect(self._on_browse)
+        path_input_layout.addWidget(btn_browse)
+        path_layout.addLayout(path_input_layout)
+        layout.addLayout(path_layout)
+
+        # 2. 录像分割时长
+        segment_layout = QHBoxLayout()
+        segment_label = QLabel("录像单段分割时长:")
+        segment_layout.addWidget(segment_label)
+
+        self.segment_spin = QSpinBox()
+        self.segment_spin.setRange(1, 120)  # 支持 1 分钟到 2 小时
+        self.segment_spin.setSuffix(" 分钟")
+        current_minutes = self.config_dict.get("recording_segment_minutes", 5)
+        self.segment_spin.setValue(current_minutes)
+        self.segment_spin.setFixedWidth(100)
+        segment_layout.addWidget(self.segment_spin)
+        segment_layout.addStretch()
+        layout.addLayout(segment_layout)
+
+        # 分割线
+        line = QFrame()
+        line.setFrameShape(QFrame.HLine)
+        line.setStyleSheet("color: #333; margin: 4px 0;")
+        layout.addWidget(line)
+
+        # 3. 底部确定取消按钮
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        
+        btn_cancel = QPushButton("取消")
+        btn_cancel.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(255,255,255,20);
+                color: #ddd;
+                border: 1px solid #444;
+            }
+            QPushButton:hover {
+                background-color: rgba(255,255,255,35);
+            }
+        """)
+        btn_cancel.clicked.connect(self.reject)
+        btn_layout.addWidget(btn_cancel)
+
+        btn_save = QPushButton("确定")
+        btn_save.clicked.connect(self._on_save)
+        btn_layout.addWidget(btn_save)
+        layout.addLayout(btn_layout)
+
+    def _on_browse(self):
+        # 打开文件夹选择框
+        dir_path = QFileDialog.getExistingDirectory(
+            self, "选择录像保存目录", self.path_input.text()
+        )
+        if dir_path:
+            # 转换为绝对路径并更新输入框
+            self.path_input.setText(str(Path(dir_path).resolve()))
+
+    def _on_save(self):
+        new_path = self.path_input.text().strip()
+        new_minutes = self.segment_spin.value()
+
+        if not new_path:
+            QMessageBox.warning(self, "警告", "录像保存路径不能为空")
+            return
+
+        # 确保路径文件夹存在
+        try:
+            Path(new_path).mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            QMessageBox.critical(self, "错误", f"无法创建该录像目录:\n{e}")
+            return
+
+        # 保存到配置
+        self.config_dict["recording_path"] = new_path
+        self.config_dict["recording_segment_minutes"] = new_minutes
+
+        from config import save_config
+        save_config(self.config_dict)
+        self.accept()

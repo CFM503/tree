@@ -1,17 +1,23 @@
 """配置管理模块"""
-import os
+import sys
 import json
 import base64
 from pathlib import Path
 
-APP_DIR = Path(__file__).parent
-CONFIG_FILE = APP_DIR / "config.json"
-RECORDINGS_DIR = APP_DIR / "recordings"
+# 判断是否是打包后的单文件环境，确保保存的配置文件和录像文件位于 exe 所在的同一目录下，而非临时目录
+if getattr(sys, 'frozen', False):
+    EXE_DIR = Path(sys.executable).parent
+else:
+    EXE_DIR = Path(__file__).parent
+
+CONFIG_FILE = EXE_DIR / "config.json"
+RECORDINGS_DIR = EXE_DIR / "rec"
 RECORDINGS_DIR.mkdir(exist_ok=True)
 
 DEFAULT_CONFIG = {
     "api_base_url": "https://videoapiv4.hyzhihuixing.com",
     "recording_path": str(RECORDINGS_DIR),
+    "recording_segment_minutes": 5,  # 默认录像分割时长：5分钟
     "remember_password": False,
     "phone": "",
     "password_encrypted": "",

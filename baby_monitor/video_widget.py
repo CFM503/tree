@@ -383,7 +383,7 @@ class VideoWidget(QWidget):
             return False
 
     def start_recording(self, save_dir: str = None):
-        """开始录像（通过 ffmpeg 录制，每5分钟自动分段）"""
+        """开始录像（通过 ffmpeg 录制，根据设置自动分段）"""
         if not self.stream_url:
             logger.warning("无视频流，无法录像")
             return
@@ -391,11 +391,16 @@ class VideoWidget(QWidget):
         if self.is_recording:
             return
 
-        from config import RECORDINGS_DIR
-        if save_dir is None:
-            save_dir = str(RECORDINGS_DIR)
-        self._save_dir = save_dir
+        from config import load_config
+        cfg = load_config()
 
+        if save_dir is None:
+            save_dir = cfg.get("recording_path")
+        if not save_dir:
+            from config import RECORDINGS_DIR
+            save_dir = str(RECORDINGS_DIR)
+        
+        self._save_dir = save_dir
         self._recording_path = self._generate_recording_path(save_dir)
 
         if not self._start_ffmpeg_recording():
@@ -416,9 +421,11 @@ class VideoWidget(QWidget):
             }
         """)
         self.recording_started.emit(self.camera_name)
-        # 5分钟自动分段
-        self._segment_timer.start(5 * 60 * 1000)
-        logger.info("开始录像: %s", self._recording_path)
+        
+        # 动态获取分段时长，默认5分钟
+        segment_minutes = cfg.get("recording_segment_minutes", 5)
+        self._segment_timer.start(segment_minutes * 60 * 1000)
+        logger.info("开始录像: %s, 分段时长: %d 分钟", self._recording_path, segment_minutes)
 
     def _stop_ffmpeg(self):
         """停止当前 ffmpeg 进程"""
@@ -433,7 +440,7 @@ class VideoWidget(QWidget):
             self._recorder_proc = None
 
     def _rotate_recording(self):
-        """每5分钟自动分段：保存当前文件，开始新文件"""
+        """自动分段：保存当前文件，开始新文件"""
         if not self.is_recording:
             return
 
@@ -445,8 +452,11 @@ class VideoWidget(QWidget):
         # 开始新分段
         self._recording_path = self._generate_recording_path(self._save_dir)
         if self._start_ffmpeg_recording():
-            self._segment_timer.start(5 * 60 * 1000)
-            logger.info("自动分段开始新录像: %s", self._recording_path)
+            from config import load_config
+            cfg = load_config()
+            segment_minutes = cfg.get("recording_segment_minutes", 5)
+            self._segment_timer.start(segment_minutes * 60 * 1000)
+            logger.info("自动分段开始新录像: %s, 分段时长: %d 分钟", self._recording_path, segment_minutes)
         else:
             self.is_recording = False
             self._rec_indicator.setVisible(False)
