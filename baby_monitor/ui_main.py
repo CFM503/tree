@@ -486,11 +486,17 @@ class MainWindow(QMainWindow):
 
         self._status_disk = QLabel("")
 
-        # 如果有预加载的摄像头，延迟显示
-        if self.cameras:
-            QTimer.singleShot(100, self._show_preloaded_cameras)
         self._status_disk.setStyleSheet("color: #aaa; margin-right: 10px;")
         self._status_bar.addPermanentWidget(self._status_disk)
+
+        # 权限保活心跳定时器（每 3 分钟）
+        self._heartbeat_timer = QTimer(self)
+        self._heartbeat_timer.timeout.connect(self._heartbeat_authority)
+        self._heartbeat_timer.start(3 * 60 * 1000)
+
+        # 异步预加载第一个宝宝的摄像头
+        if self.children:
+            QTimer.singleShot(100, self._preload_first_child)
 
     def _update_left_panel_stretch(self):
         """动态调整左侧面板 stretch：展开的面板填充空间，折叠的紧贴"""
@@ -517,6 +523,27 @@ class MainWindow(QMainWindow):
             }}
             QPushButton:hover {{ background-color: rgba(255,255,255,60); }}
         """
+
+    def _preload_first_child(self):
+        """异步预加载第一个宝宝的摄像头（避免启动阻塞）"""
+        if not self.children:
+            return
+        child = self.children[0]
+        name = child.get("name", "")
+        self._current_child = child
+        self._child_label.setText(f"当前: {name}")
+        self._status_bar.showMessage(f"⏳ 正在加载 {name} 的摄像头...")
+
+        # 选中列表项但不触发重复加载
+        self.child_list.blockSignals(True)
+        self.child_list.setCurrentRow(0)
+        self.child_list.blockSignals(False)
+
+        # 后台线程加载
+        self._load_thread = LoadCamerasThread(self.client, child)
+        self._load_thread.finished.connect(self._on_cameras_loaded)
+        self._load_thread.error.connect(self._on_cameras_error)
+        self._load_thread.start()
 
     def _show_preloaded_cameras(self):
         """显示预加载的摄像头（仅显示有权限的）"""
@@ -751,8 +778,37 @@ class MainWindow(QMainWindow):
         import subprocess
         subprocess.Popen(f'explorer "{RECORDINGS_DIR}"')
 
+    def _heartbeat_authority(self):
+        """权限保活心跳：后台线程续期摄像头权限"""
+        if not self.cameras or not self._video_widgets:
+            return
+
+        # 只对正在播放的摄像头续期
+        playing_cameras = []
+        for i, vw in enumerate(self._video_widgets):
+            if vw.is_playing and i < len(self.cameras):
+                playing_cameras.append(self.cameras[i])
+
+        if not playing_cameras:
+            return
+
+        import threading
+
+        def _renew():
+            for cam in playing_cameras:
+                try:
+                    self.client.get_camera_authority(
+                        camera_sn=cam.get("ZhsCarameSn", ""))
+                except Exception as e:
+                    logger.warning("权限续期失败 [%s]: %s",
+                                   cam.get("ChannelName", ""), e)
+
+        threading.Thread(target=_renew, daemon=True).start()
+        logger.info("权限保活心跳: %d 个摄像头", len(playing_cameras))
+
     def closeEvent(self, event):
         """关闭窗口"""
+        self._heartbeat_timer.stop()
         for vw in self._video_widgets:
             vw.stop()
         from config import save_config

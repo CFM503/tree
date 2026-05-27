@@ -1,4 +1,4 @@
-"""掌通家园监控查看器 - 主程序入口 (v1.5)"""
+"""掌通家园监控查看器 - 主程序入口 (v1.6)"""
 import os
 import sys
 import logging
@@ -49,37 +49,8 @@ def main():
 
     logger.info("登录成功，共 %d 个宝宝", len(children))
 
-    # 预获取第一个宝宝的摄像头列表和流地址
-    child = children[0]
-    logger.info("预获取摄像头: %s (school_id=%s)", child.get("name"), child.get("school_id"))
-    client.select_child(child["child_id"], child.get("class_id", 0), child.get("school_id", 0))
-
-    cameras = []
-    try:
-        cameras = client.get_camera_list()
-        logger.info("获取到 %d 个摄像头", len(cameras))
-        # 保持权限
-        for cam in cameras:
-            cam["authority"] = 0
-            try:
-                auth = client.get_camera_authority(camera_sn=cam.get("ZhsCarameSn", ""))
-                cam["authority"] = auth.get("data", {}).get("authority", 0)
-            except Exception:
-                pass
-        # 获取在线摄像头的流地址
-        authorized = [c for c in cameras if c.get("authority") == 1]
-        if authorized:
-            urls = client.get_all_stream_urls(authorized)
-            for cam in authorized:
-                name = cam.get("ChannelName", "")
-                if name in urls:
-                    cam["stream_url"] = urls[name]
-    except Exception as e:
-        logger.warning("预获取摄像头失败: %s", e)
-
-    # 显示主窗口（只传有权限的摄像头）
-    authorized_cameras = [c for c in cameras if c.get("authority") == 1]
-    window = MainWindow(client, children, authorized_cameras, cfg)
+    # 立即显示主窗口，摄像头列表由主窗口在后台线程加载（避免主线程阻塞白屏）
+    window = MainWindow(client, children, [], cfg)
     window.show()
 
     sys.exit(app.exec_())

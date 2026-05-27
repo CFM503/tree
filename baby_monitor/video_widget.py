@@ -5,8 +5,10 @@
 """
 import os
 import sys
+import time
 import signal
 import logging
+import threading
 import subprocess
 from pathlib import Path
 from datetime import datetime
@@ -17,6 +19,8 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QPixmap, QImage, QMouseEvent, QPalette, QColor
+
+from loading_overlay import LoadingOverlay
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +56,14 @@ class VideoWidget(QWidget):
         self._segment_timer.setSingleShot(True)
         self._segment_timer.timeout.connect(self._rotate_recording)
 
+        # 健康监测 & 自动重连
+        self._retry_count = 0
+        self._max_retries = 3
+        self._play_start_time = 0.0
+        self._loading_hidden = False
+        self._health_timer = QTimer(self)
+        self._health_timer.timeout.connect(self._check_health)
+
         self._init_ui()
 
     def _init_ui(self):
@@ -77,6 +89,10 @@ class VideoWidget(QWidget):
         self._video_frame.setStyleSheet("background-color: #0a0a1a;")
         self._video_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         layout.addWidget(self._video_frame)
+
+        # 加载遮罩（叠加在视频画面上）
+        self._loading_overlay = LoadingOverlay(self._video_frame)
+        self._loading_overlay.retry_clicked.connect(self._on_retry)
 
         # 信息栏
         info_bar = QWidget()
@@ -170,6 +186,7 @@ class VideoWidget(QWidget):
         """设置摄像头信息"""
         self.camera_name = name
         self.stream_url = stream_url
+        self._retry_count = 0  # 重置重连计数
         self._name_label.setText(name)
         if is_online:
             self._status_label.setText("● 在线")
@@ -182,6 +199,7 @@ class VideoWidget(QWidget):
         """播放视频流"""
         if not MPV_AVAILABLE:
             logger.warning("mpv 不可用")
+            self._loading_overlay.set_error("mpv.exe 未找到", show_retry=False)
             return
 
         if url:
@@ -193,6 +211,11 @@ class VideoWidget(QWidget):
 
         # 停止当前播放
         self.stop()
+
+        # 显示加载动画
+        self._loading_overlay.show_loading("正在连接...")
+        self._loading_hidden = False
+        self._play_start_time = time.time()
 
         try:
             # 确保窗口已渲染
@@ -233,28 +256,90 @@ class VideoWidget(QWidget):
             self.is_playing = True
             self._btn_play.setText("⏸ 停止")
             self._placeholder.setVisible(False)
+
+            # 启动健康监测
+            self._health_timer.start(3000)
+
             logger.info("开始播放: %s (%s)", self.camera_name, self.stream_url[:60])
 
         except Exception as e:
             logger.error("播放失败: %s", e)
+            self._loading_overlay.set_error(f"播放失败: {e}")
 
     def stop(self):
-        """停止播放"""
+        """停止播放（非阻塞：后台清理进程）"""
+        self._health_timer.stop()
+        self._loading_overlay.hide_loading()
+
         if self._mpv_proc:
+            proc = self._mpv_proc
+            self._mpv_proc = None
             try:
-                self._mpv_proc.terminate()
-                self._mpv_proc.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                self._mpv_proc.kill()
+                proc.terminate()
             except Exception:
                 pass
-            self._mpv_proc = None
+            # 后台线程等待进程退出，不阻塞UI
+            threading.Thread(target=self._reap_process, args=(proc,), daemon=True).start()
 
         self.is_playing = False
         self._btn_play.setText("▶ 播放")
 
         if self.is_recording:
             self.stop_recording()
+
+    @staticmethod
+    def _reap_process(proc):
+        """后台清理已终止的 mpv 进程"""
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            try:
+                proc.kill()
+                proc.wait(timeout=2)
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def _check_health(self):
+        """定时检查 mpv 进程健康状态"""
+        if not self.is_playing or not self._mpv_proc:
+            return
+
+        elapsed = time.time() - self._play_start_time
+
+        # 检查进程是否已退出（崩溃/断流）
+        ret = self._mpv_proc.poll()
+        if ret is not None:
+            logger.warning("mpv 进程退出: %s (code=%s)", self.camera_name, ret)
+            self._mpv_proc = None
+            self.is_playing = False
+            self._btn_play.setText("▶ 播放")
+
+            if self._retry_count < self._max_retries:
+                self._retry_count += 1
+                logger.info("自动重连 %d/%d: %s", self._retry_count, self._max_retries, self.camera_name)
+                self._loading_overlay.show_loading(f"重新连接中 ({self._retry_count}/{self._max_retries})...")
+                QTimer.singleShot(1000, lambda: self.play())
+            else:
+                self._health_timer.stop()
+                self._loading_overlay.set_error("连接中断，点击重试")
+            return
+
+        # 超时检测：15秒仍未出画面
+        if not self._loading_hidden and elapsed > 15:
+            self._loading_overlay.show_loading("连接较慢，请稍候...")
+
+        # 成功检测：进程存活超过 4 秒，认为已出画面
+        if not self._loading_hidden and elapsed > 4:
+            self._loading_hidden = True
+            self._loading_overlay.hide_loading()
+            self._retry_count = 0  # 重置重连计数
+
+    def _on_retry(self):
+        """用户点击重试"""
+        self._retry_count = 0
+        self.play()
 
     def toggle_play(self):
         """切换播放/停止"""
