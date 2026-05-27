@@ -618,3 +618,41 @@
 2026-05-27 09:07:15,522 [INFO] __main__: 登录成功，共 2 个宝宝
 2026-05-27 09:07:15,665 [INFO] api_client: 请求摄像头列表: school_id=203215745, url=https://hxg.api.myenglish.com.cn/api/v4/Video/GetVideoCameraListByZhsSchoolId
 2026-05-27 09:07:16,225 [WARNING] ui_main: 摄像头加载失败: object of type 'NoneType' has no len()
+2026-05-27 09:25:53,227 [INFO] api_client: 获取appkey成功
+2026-05-27 09:25:57,015 [INFO] api_client: 登录成功: user_id=250887591, children=2
+2026-05-27 09:25:57,023 [INFO] __main__: 登录成功，共 2 个宝宝
+2026-05-27 09:25:57,164 [INFO] api_client: 请求摄像头列表: school_id=203215745, url=https://hxg.api.myenglish.com.cn/api/v4/Video/GetVideoCameraListByZhsSchoolId
+2026-05-27 09:25:58,048 [INFO] api_client: 摄像头API响应: Code=1, Data长度=0
+2026-05-27 09:25:58,049 [WARNING] api_client: 摄像头列表为空，响应: {'Code': 1, 'Data': None, 'Msg': '没有查询到设备信息，请联系客服确认该园是否已开通！'}
+2026-05-27 09:26:00,947 [INFO] api_client: 请求摄像头列表: school_id=203152785, url=https://hxg.api.myenglish.com.cn/api/v4/Video/GetVideoCameraListByZhsSchoolId
+2026-05-27 09:26:01,973 [INFO] api_client: 摄像头API响应: Code=0, Data长度=32
+2026-05-27 09:26:03,898 [INFO] ui_main: 并发获取流地址: 视频19@DS-7832N-R2(B)(K38932817) -> https://open.ys7.com/v3/openlive/K38932817_19_1.m3u8?expire=...
+2026-05-27 09:26:03,920 [INFO] ui_main: 并发获取流地址: 视频30@DS-7832N-R2(B)(K38932817) -> https://open.ys7.com/v3/openlive/K38932817_30_1.m3u8?expire=...
+2026-05-27 09:26:03,920 [INFO] ui_main: 并发获取流地址: 视频22@DS-7832N-R2(B)(K38932817) -> https://open.ys7.com/v3/openlive/K38932817_22_1.m3u8?expire=...
+2026-05-27 09:26:03,941 [INFO] ui_main: 并发获取流地址: 视频29@DS-7832N-R2(B)(K38932817) -> https://open.ys7.com/v3/openlive/K38932817_29_1.m3u8?expire=...
+2026-05-27 09:26:04,036 [INFO] ui_main: 并发获取流地址: 视频11@DS-7832N-R2(B)(K38932817) -> https://open.ys7.com/v3/openlive/K38932817_11_1.m3u8?expire=...
+2026-05-27 09:26:04,121 [INFO] ui_main: 并发获取流地址: 视频27@DS-7832N-R2(B)(K38932817) -> https://open.ys7.com/v3/openlive/K38932817_27_1.m3u8?expire=...
+2026-05-27 09:26:04,155 [INFO] video_widget: mpv WID: 0xe0b5a, URL: https://open.ys7.com/v3/openlive/K38932817_11_1.m3u8?expire=
+2026-05-27 09:26:04,164 [INFO] video_widget: 开始播放: 视频11@DS-7832N-R2(B)(K38932817) (https://open.ys7.com/v3/openlive/K38932817_11_1.m3u8?expire=)
+2026-05-27 09:26:04,183 [INFO] video_widget: mpv WID: 0xe0a30, URL: https://open.ys7.com/v3/openlive/K38932817_19_1.m3u8?expire=
+2026-05-27 09:26:04,190 [INFO] video_widget: 开始播放: 视频19@DS-7832N-R2(B)(K38932817) (https://open.ys7.com/v3/openlive/K38932817_19_1.m3u8?expire=)
+2026-05-27 09:26:04,206 [INFO] video_widget: mpv WID: 0x1d0868, URL: https://open.ys7.com/v3/openlive/K38932817_22_1.m3u8?expire=
+2026-05-27 09:26:04,215 [INFO] video_widget: 开始播放: 视频22@DS-7832N-R2(B)(K38932817) (https://open.ys7.com/v3/openlive/K38932817_22_1.m3u8?expire=)
+2026-05-27 09:26:04,232 [INFO] video_widget: mpv WID: 0x100a3a, URL: https://open.ys7.com/v3/openlive/K38932817_27_1.m3u8?expire=
+2026-05-27 09:26:04,241 [INFO] video_widget: 开始播放: 视频27@DS-7832N-R2(B)(K38932817) (https://open.ys7.com/v3/openlive/K38932817_27_1.m3u8?expire=)
+2026-05-27 09:26:04,257 [INFO] video_widget: mpv WID: 0x6408b6, URL: https://open.ys7.com/v3/openlive/K38932817_29_1.m3u8?expire=
+2026-05-27 09:26:04,267 [INFO] video_widget: 开始播放: 视频29@DS-7832N-R2(B)(K38932817) (https://open.ys7.com/v3/openlive/K38932817_29_1.m3u8?expire=)
+2026-05-27 09:26:04,287 [INFO] video_widget: mpv WID: 0xc0aaa, URL: https://open.ys7.com/v3/openlive/K38932817_30_1.m3u8?expire=
+2026-05-27 09:26:04,296 [INFO] video_widget: 开始播放: 视频30@DS-7832N-R2(B)(K38932817) (https://open.ys7.com/v3/openlive/K38932817_30_1.m3u8?expire=)
+2026-05-27 09:26:13,256 [WARNING] video_widget: mpv 进程退出: 视频27@DS-7832N-R2(B)(K38932817) (code=2)
+2026-05-27 09:26:13,257 [INFO] video_widget: 自动重连 1/3: 视频27@DS-7832N-R2(B)(K38932817)
+2026-05-27 09:26:14,259 [INFO] video_widget: mpv WID: 0x100a3a, URL: https://open.ys7.com/v3/openlive/K38932817_27_1.m3u8?expire=
+2026-05-27 09:26:14,265 [INFO] video_widget: 开始播放: 视频27@DS-7832N-R2(B)(K38932817) (https://open.ys7.com/v3/openlive/K38932817_27_1.m3u8?expire=)
+2026-05-27 09:26:15,714 [INFO] ui_main: 保存设置并刷新录像列表
+2026-05-27 09:26:32,108 [INFO] video_widget: 开始录像: recordings\REC_20260527_092631_lov2.ts, 分段时长: 6 分钟
+2026-05-27 09:28:18,906 [INFO] video_widget: 截图保存: D:\SOFT\AI\github\tree\baby_monitor\rec\SNAP_20260527_092816_v3kx.jpg
+2026-05-27 09:28:57,059 [INFO] ui_main: 权限保活心跳: 6 个摄像头
+2026-05-27 09:31:57,078 [INFO] ui_main: 权限保活心跳: 6 个摄像头
+2026-05-27 09:32:32,783 [INFO] ui_main: 录像保存: 视频27@DS-7832N-R2(B)(K38932817) -> recordings\REC_20260527_092631_lov2.ts
+2026-05-27 09:32:32,784 [INFO] video_widget: 自动分段保存: recordings\REC_20260527_092631_lov2.ts
+2026-05-27 09:32:32,793 [INFO] video_widget: 自动分段开始新录像: recordings\REC_20260527_093232_5s15.ts, 分段时长: 6 分钟

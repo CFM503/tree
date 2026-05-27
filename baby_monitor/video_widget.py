@@ -545,6 +545,41 @@ class VideoWidget(QWidget):
         """双击切换全屏"""
         self.double_clicked.emit(self.index)
 
+    def contextMenuEvent(self, event):
+        """右键上下文菜单：支持一键重连刷新、截图和录像开关"""
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: #1e1e2e;
+                color: white;
+                border: 1px solid #444;
+                font-size: 12px;
+            }
+            QMenu::item {
+                padding: 6px 18px;
+            }
+            QMenu::item:selected {
+                background-color: #0078d4;
+            }
+        """)
+
+        action_reconnect = QAction("🔄 重新连接 (刷新画面)", self)
+        action_reconnect.triggered.connect(self.play)
+        menu.addAction(action_reconnect)
+
+        menu.addSeparator()
+
+        action_snapshot = QAction("📸 画面截图", self)
+        action_snapshot.triggered.connect(self.take_snapshot)
+        menu.addAction(action_snapshot)
+
+        rec_text = "⏹ 停止录像" if self.is_recording else "🎥 开始录像"
+        action_record = QAction(rec_text, self)
+        action_record.triggered.connect(self.toggle_record)
+        menu.addAction(action_record)
+
+        menu.exec_(event.globalPos())
+
     def closeEvent(self, event):
         """关闭时清理资源"""
         self.stop()
