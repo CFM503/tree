@@ -499,7 +499,7 @@ class MainWindow(QMainWindow):
         self._status_bar.showMessage("请选择宝宝")
 
         # 软件版本号
-        self._status_version = QLabel("v2.6-stable")
+        self._status_version = QLabel("v2.6.1-stable")
         self._status_version.setStyleSheet("color: #777; margin-right: 15px; font-weight: bold;")
         self._status_bar.addPermanentWidget(self._status_version)
 
@@ -826,7 +826,9 @@ class MainWindow(QMainWindow):
             return
         cam = self.cameras[index]
         camera_sn = cam.get("ZhsCarameSn", "")
-        if not camera_sn:
+        device_code = cam.get("DeviceCode", "")
+        channel_no = cam.get("ChannelNo", 1)
+        if not camera_sn or not device_code:
             return
 
         import threading
@@ -834,7 +836,7 @@ class MainWindow(QMainWindow):
             try:
                 logger.info("流地址过期，重新申请权限和流地址: %s", cam.get("ChannelName", ""))
                 self.client.get_camera_authority(camera_sn)
-                new_url = self.client.get_stream_url(camera_sn, 1, protocol=2, quality=1)
+                new_url = self.client.get_stream_url(device_code, channel_no, protocol=2, quality=1)
                 
                 # 如果萤石云的 accessToken 本身也过期了，则全量刷新设备列表来获取新 token
                 if not new_url:
@@ -842,7 +844,7 @@ class MainWindow(QMainWindow):
                     try:
                         self.client.login() # 刷新主账号状态
                         self.client.get_camera_list() # 获取最新摄像头列表并更新 ys_token
-                        new_url = self.client.get_stream_url(camera_sn, 1, protocol=2, quality=1)
+                        new_url = self.client.get_stream_url(device_code, channel_no, protocol=2, quality=1)
                     except Exception as inner_e:
                         logger.error("刷新 Token 失败: %s", inner_e)
 
