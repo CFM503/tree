@@ -255,8 +255,8 @@ class VideoWidget(QWidget):
 
             self._mpv_proc = subprocess.Popen(
                 cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
                 startupinfo=startupinfo,
             )
 
