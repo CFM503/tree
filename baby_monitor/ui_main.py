@@ -499,7 +499,7 @@ class MainWindow(QMainWindow):
         self._status_bar.showMessage("请选择宝宝")
 
         # 软件版本号
-        self._status_version = QLabel("v2.5-stable")
+        self._status_version = QLabel("v2.6-stable")
         self._status_version.setStyleSheet("color: #777; margin-right: 15px; font-weight: bold;")
         self._status_bar.addPermanentWidget(self._status_version)
 
@@ -835,13 +835,24 @@ class MainWindow(QMainWindow):
                 logger.info("流地址过期，重新申请权限和流地址: %s", cam.get("ChannelName", ""))
                 self.client.get_camera_authority(camera_sn)
                 new_url = self.client.get_stream_url(camera_sn, 1, protocol=2, quality=1)
+                
+                # 如果萤石云的 accessToken 本身也过期了，则全量刷新设备列表来获取新 token
+                if not new_url:
+                    logger.info("尝试刷新萤石云 Token...")
+                    try:
+                        self.client.login() # 刷新主账号状态
+                        self.client.get_camera_list() # 获取最新摄像头列表并更新 ys_token
+                        new_url = self.client.get_stream_url(camera_sn, 1, protocol=2, quality=1)
+                    except Exception as inner_e:
+                        logger.error("刷新 Token 失败: %s", inner_e)
+
                 if new_url:
                     cam["stream_url"] = new_url
                     logger.info("流地址刷新成功: %s -> %s...", cam.get("ChannelName", ""), new_url[:60])
                     # 在主线程调用播放
                     QTimer.singleShot(0, lambda: self._video_widgets[index].play(new_url))
                 else:
-                    logger.warning("刷新流地址失败: %s", cam.get("ChannelName", ""))
+                    logger.warning("刷新流地址最终失败: %s", cam.get("ChannelName", ""))
             except Exception as e:
                 logger.error("刷新流地址出错: %s", e)
 

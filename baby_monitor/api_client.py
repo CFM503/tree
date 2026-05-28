@@ -251,7 +251,7 @@ class BBTreeClient:
             "protocol": protocol,
             "quality": quality,
             "type": "1",
-            "expireTime": 3600,
+            "expireTime": 86400 * 7,
             "supportH265": "1",
         }, headers={"Content-Type": "application/x-www-form-urlencoded"}, timeout=15)
         resp.raise_for_status()
