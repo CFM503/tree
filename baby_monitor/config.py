@@ -19,7 +19,6 @@ DEFAULT_CONFIG = {
     "recording_path": str(RECORDINGS_DIR),
     "recording_segment_minutes": 5,  # 默认录像分割时长：5分钟
     "network_timeout_seconds": 15,    # 默认网络超时时间：15秒
-    "keepalive_minutes": 30,          # 默认登录保活时间：30分钟
     "remember_password": False,
     "phone": "",
     "password_encrypted": "",

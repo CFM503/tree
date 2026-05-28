@@ -39,6 +39,7 @@ class VideoWidget(QWidget):
     double_clicked = pyqtSignal(int)
     recording_started = pyqtSignal(str)
     recording_stopped = pyqtSignal(str, str)
+    stream_expired = pyqtSignal(int)  # 通知主窗口流可能已过期，需要重新获取 URL
 
     def __init__(self, index: int = 0, parent=None):
         super().__init__(parent)
@@ -327,7 +328,8 @@ class VideoWidget(QWidget):
                 self._retry_count += 1
                 logger.info("自动重连 %d/%d: %s", self._retry_count, self._max_retries, self.camera_name)
                 self._loading_overlay.show_loading(f"重新连接中 ({self._retry_count}/{self._max_retries})...")
-                QTimer.singleShot(1000, lambda: self.play())
+                # 触发重新获取 URL 的信号，而不是直接用旧 URL 重连
+                self.stream_expired.emit(self.index)
             else:
                 self._health_timer.stop()
                 self._loading_overlay.set_error("连接中断，点击重试")

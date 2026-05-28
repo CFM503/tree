@@ -341,12 +341,7 @@ class MainWindow(QMainWindow):
         self._max_cameras = 6
         self._load_thread = None
 
-        # 登录保活定时器（默认 30 分钟）
-        self._login_keepalive_timer = QTimer(self)
-        self._login_keepalive_timer.timeout.connect(self._keepalive_login)
-
         self._init_ui()
-        self._update_login_keepalive_timer()
 
     def _init_ui(self):
         self.setWindowTitle("猴子看护")
@@ -504,7 +499,7 @@ class MainWindow(QMainWindow):
         self._status_bar.showMessage("请选择宝宝")
 
         # 软件版本号
-        self._status_version = QLabel("v2.4-stable")
+        self._status_version = QLabel("v2.5-stable")
         self._status_version.setStyleSheet("color: #777; margin-right: 15px; font-weight: bold;")
         self._status_bar.addPermanentWidget(self._status_version)
 
@@ -699,6 +694,7 @@ class MainWindow(QMainWindow):
             vw = VideoWidget(i)
             vw.double_clicked.connect(self._on_video_double_click)
             vw.recording_stopped.connect(self._on_recording_stopped)
+            vw.stream_expired.connect(self._on_stream_expired)
             self._video_widgets.append(vw)
             row = i // 3
             col = i % 3
@@ -822,29 +818,34 @@ class MainWindow(QMainWindow):
         if dialog.exec_() == QDialog.Accepted:
             # 刷新录像列表以匹配新路径
             self.recording_list.refresh()
-            self._update_login_keepalive_timer()
             logger.info("保存设置并刷新录像列表")
 
-    def _update_login_keepalive_timer(self):
-        """更新并启动登录保活定时器"""
-        minutes = self.config.get("keepalive_minutes", 30)
-        if minutes > 0:
-            self._login_keepalive_timer.start(minutes * 60 * 1000)
-            logger.info("登录保活定时器已启动，间隔: %d 分钟", minutes)
-        else:
-            self._login_keepalive_timer.stop()
-            logger.info("登录保活已禁用")
+    def _on_stream_expired(self, index: int):
+        """处理流过期，重新获取 URL"""
+        if index >= len(self.cameras):
+            return
+        cam = self.cameras[index]
+        camera_sn = cam.get("ZhsCarameSn", "")
+        if not camera_sn:
+            return
 
-    def _keepalive_login(self):
-        """在后台重新登录以保持会话"""
         import threading
-        def _renew():
+        def _refresh():
             try:
-                self.client.login()
-                logger.info("后台登录保活成功")
+                logger.info("流地址过期，重新申请权限和流地址: %s", cam.get("ChannelName", ""))
+                self.client.get_camera_authority(camera_sn)
+                new_url = self.client.get_stream_url(camera_sn, 1, protocol=2, quality=1)
+                if new_url:
+                    cam["stream_url"] = new_url
+                    logger.info("流地址刷新成功: %s -> %s...", cam.get("ChannelName", ""), new_url[:60])
+                    # 在主线程调用播放
+                    QTimer.singleShot(0, lambda: self._video_widgets[index].play(new_url))
+                else:
+                    logger.warning("刷新流地址失败: %s", cam.get("ChannelName", ""))
             except Exception as e:
-                logger.warning("后台登录保活失败: %s", e)
-        threading.Thread(target=_renew, daemon=True).start()
+                logger.error("刷新流地址出错: %s", e)
+
+        threading.Thread(target=_refresh, daemon=True).start()
 
     def _heartbeat_authority(self):
         """权限保活心跳：后台线程续期摄像头权限"""
@@ -894,7 +895,7 @@ class SettingsDialog(QDialog):
 
     def _init_ui(self):
         self.setWindowTitle("系统设置")
-        self.setFixedSize(450, 330)
+        self.setFixedSize(450, 290)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         self.setStyleSheet("""
             QDialog {
@@ -1000,21 +1001,6 @@ class SettingsDialog(QDialog):
         timeout_layout.addStretch()
         layout.addLayout(timeout_layout)
 
-        # 4. 登录保活时长
-        keepalive_layout = QHBoxLayout()
-        keepalive_label = QLabel("登录自动保活(0为关闭):")
-        keepalive_layout.addWidget(keepalive_label)
-
-        self.keepalive_spin = QSpinBox()
-        self.keepalive_spin.setRange(0, 1440)  # 支持 0 到 24 小时
-        self.keepalive_spin.setSuffix(" 分钟")
-        current_keepalive = self.config_dict.get("keepalive_minutes", 30)
-        self.keepalive_spin.setValue(current_keepalive)
-        self.keepalive_spin.setFixedWidth(100)
-        keepalive_layout.addWidget(self.keepalive_spin)
-        keepalive_layout.addStretch()
-        layout.addLayout(keepalive_layout)
-
         # 分割线
         line = QFrame()
         line.setFrameShape(QFrame.HLine)
@@ -1057,7 +1043,6 @@ class SettingsDialog(QDialog):
         new_path = self.path_input.text().strip()
         new_minutes = self.segment_spin.value()
         new_timeout = self.timeout_spin.value()
-        new_keepalive = self.keepalive_spin.value()
 
         if not new_path:
             QMessageBox.warning(self, "警告", "录像保存路径不能为空")
@@ -1074,7 +1059,6 @@ class SettingsDialog(QDialog):
         self.config_dict["recording_path"] = new_path
         self.config_dict["recording_segment_minutes"] = new_minutes
         self.config_dict["network_timeout_seconds"] = new_timeout
-        self.config_dict["keepalive_minutes"] = new_keepalive
 
         from config import save_config
         save_config(self.config_dict)
