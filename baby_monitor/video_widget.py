@@ -244,6 +244,7 @@ class VideoWidget(QWidget):
                 "--demuxer-readahead-secs=0.5",        # 降低预读秒数
                 "--stream-buffer-size=32KiB",          # 降低流输入缓存区大小加快出图
                 f"--network-timeout={timeout}",         # 自定义网络连接超时
+                f"--demuxer-lavf-o=timeout={timeout * 1000000}", # FFmpeg底层读取超时 (微秒)
                 self.stream_url,
             ]
 
@@ -345,10 +346,16 @@ class VideoWidget(QWidget):
             self._loading_overlay.hide_loading()
             self._retry_count = 0  # 重置重连计数
 
+    def reconnect_with_refresh(self):
+        """重新连接并刷新流地址与权限 (带 Token)"""
+        self.stop()
+        self._retry_count = 0
+        self._loading_overlay.show_loading("重新获取流地址...")
+        self.stream_expired.emit(self.index)
+
     def _on_retry(self):
         """用户点击重试"""
-        self._retry_count = 0
-        self.play()
+        self.reconnect_with_refresh()
 
     def toggle_play(self):
         """切换播放/停止"""
@@ -572,7 +579,7 @@ class VideoWidget(QWidget):
         """)
 
         action_reconnect = QAction("🔄 重新连接 (刷新画面)", self)
-        action_reconnect.triggered.connect(self.play)
+        action_reconnect.triggered.connect(self.reconnect_with_refresh)
         menu.addAction(action_reconnect)
 
         menu.addSeparator()
