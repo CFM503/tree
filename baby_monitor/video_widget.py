@@ -18,7 +18,7 @@ from PyQt5.QtWidgets import (
     QSizePolicy, QMenu, QAction, QApplication
 )
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import QPixmap, QImage, QMouseEvent, QPalette, QColor
+from PyQt5.QtGui import QPixmap, QImage, QMouseEvent, QWheelEvent, QPalette, QColor
 
 from loading_overlay import LoadingOverlay
 
@@ -31,6 +31,42 @@ MPV_AVAILABLE = os.path.isfile(MPV_PATH)
 
 if not MPV_AVAILABLE:
     logger.warning("mpv.exe 未找到: %s，视频播放不可用", MPV_PATH)
+
+
+class VideoInteractionOverlay(QWidget):
+    """用于捕获视频上方鼠标事件的透明遮罩控件"""
+
+    double_clicked = pyqtSignal(QMouseEvent)
+    mouse_pressed = pyqtSignal(QMouseEvent)
+    mouse_moved = pyqtSignal(QMouseEvent)
+    mouse_released = pyqtSignal(QMouseEvent)
+    wheel_scrolled = pyqtSignal(QWheelEvent)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, False)
+        self.setMouseTracking(True)
+        self.hide()
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent):
+        self.double_clicked.emit(event)
+
+    def mousePressEvent(self, event: QMouseEvent):
+        self.mouse_pressed.emit(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent):
+        self.mouse_moved.emit(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent):
+        self.mouse_released.emit(event)
+
+    def wheelEvent(self, event: QWheelEvent):
+        self.wheel_scrolled.emit(event)
+
+    def paintEvent(self, event):
+        # 保持透明，只接收事件
+        pass
 
 
 class VideoWidget(QWidget):
@@ -65,6 +101,17 @@ class VideoWidget(QWidget):
         self._health_timer = QTimer(self)
         self._health_timer.timeout.connect(self._check_health)
 
+        # 画面放大和平移状态 (仅在单画面下激活)
+        self.zoom_enabled = False
+        self.zoom_level = 0.0
+        self.pan_x = 0.0
+        self.pan_y = 0.0
+        self.ipc_pipe = ""
+        self._is_dragging = False
+        self._drag_start = None
+        self._start_pan_x = 0.0
+        self._start_pan_y = 0.0
+
         self._init_ui()
 
     def _init_ui(self):
@@ -94,6 +141,28 @@ class VideoWidget(QWidget):
         # 加载遮罩（叠加在视频画面上）
         self._loading_overlay = LoadingOverlay(self._video_frame)
         self._loading_overlay.retry_clicked.connect(self._on_retry)
+
+        # 交互遮罩（放置在最顶层用于捕获鼠标拖拽/滚轮缩放事件）
+        self._interaction_overlay = VideoInteractionOverlay(self._video_frame)
+        self._interaction_overlay.double_clicked.connect(self._on_overlay_double_click)
+        self._interaction_overlay.mouse_pressed.connect(self._on_overlay_pressed)
+        self._interaction_overlay.mouse_moved.connect(self._on_overlay_moved)
+        self._interaction_overlay.mouse_released.connect(self._on_overlay_released)
+        self._interaction_overlay.wheel_scrolled.connect(self._on_overlay_wheel)
+
+        # 画面放大倍率提示标签
+        self._zoom_label = QLabel(self._video_frame)
+        self._zoom_label.setStyleSheet("""
+            QLabel {
+                background-color: rgba(0, 0, 0, 180);
+                color: #0078d4;
+                border-radius: 4px;
+                padding: 4px 8px;
+                font-size: 11px;
+                font-weight: bold;
+            }
+        """)
+        self._zoom_label.setVisible(False)
 
         # 信息栏
         info_bar = QWidget()
@@ -213,6 +282,9 @@ class VideoWidget(QWidget):
         # 停止当前播放
         self.stop()
 
+        # 生成用于 mpv JSON-IPC 控制的唯一命名管道
+        self.ipc_pipe = rf"\\.\pipe\baby-monitor-mpv-{self.index}-{int(time.time() * 1000)}"
+
         # 显示加载动画
         self._loading_overlay.show_loading("正在连接...")
         self._loading_hidden = False
@@ -233,6 +305,7 @@ class VideoWidget(QWidget):
             cmd = [
                 MPV_PATH,
                 f"--wid={wid}",
+                f"--input-ipc-server={self.ipc_pipe}",  # 启用 JSON-IPC 服务
                 "--terminal=no",
                 "--really-quiet",
                 "--keep-open=no",
@@ -266,6 +339,12 @@ class VideoWidget(QWidget):
             self._btn_play.setText("⏸ 停止")
             self._placeholder.setVisible(False)
 
+            # 如果缩放交互已启用，展示透明交互遮罩层
+            if self.zoom_enabled:
+                self._interaction_overlay.setGeometry(0, 0, self._video_frame.width(), self._video_frame.height())
+                self._interaction_overlay.show()
+                self._interaction_overlay.raise_()
+
             # 启动健康监测
             self._health_timer.start(3000)
 
@@ -279,6 +358,17 @@ class VideoWidget(QWidget):
         """停止播放（非阻塞：后台清理进程）"""
         self._health_timer.stop()
         self._loading_overlay.hide_loading()
+
+        # 隐藏并重置缩放交互界面
+        if hasattr(self, '_interaction_overlay'):
+            self._interaction_overlay.hide()
+        if hasattr(self, '_zoom_label'):
+            self._zoom_label.hide()
+        self.zoom_level = 0.0
+        self.pan_x = 0.0
+        self.pan_y = 0.0
+        self.ipc_pipe = ""
+        self._is_dragging = False
 
         if self._mpv_proc:
             proc = self._mpv_proc
@@ -356,6 +446,176 @@ class VideoWidget(QWidget):
     def _on_retry(self):
         """用户点击重试"""
         self.reconnect_with_refresh()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, '_interaction_overlay'):
+            self._interaction_overlay.setGeometry(0, 0, self._video_frame.width(), self._video_frame.height())
+        if hasattr(self, '_zoom_label') and self._zoom_label.isVisible():
+            self._position_zoom_label()
+
+    def _position_zoom_label(self):
+        margin = 10
+        x = self._video_frame.width() - self._zoom_label.width() - margin
+        y = margin
+        self._zoom_label.move(max(margin, x), y)
+
+    def _send_mpv_commands(self, cmds: list) -> bool:
+        """通过 Windows 命名管道给 mpv.exe 发送 JSON IPC 指令 (无需 pywin32)"""
+        if not self.is_playing or not self.ipc_pipe:
+            return False
+
+        import ctypes
+        import msvcrt
+        import os
+        import json
+
+        GENERIC_WRITE = 0x40000000
+        OPEN_EXISTING = 3
+        INVALID_HANDLE_VALUE = -1
+
+        handle = ctypes.windll.kernel32.CreateFileW(
+            self.ipc_pipe,
+            GENERIC_WRITE,
+            0,
+            None,
+            OPEN_EXISTING,
+            0,
+            None
+        )
+        if handle == INVALID_HANDLE_VALUE:
+            return False
+
+        try:
+            fd = msvcrt.open_osfhandle(handle, os.O_WRONLY)
+            with os.fdopen(fd, 'wb', buffering=0) as f:
+                for cmd in cmds:
+                    payload = (json.dumps(cmd) + "\n").encode('utf-8')
+                    f.write(payload)
+            return True
+        except Exception as e:
+            logger.error("发送 IPC 命令到 mpv 失败: %s", e)
+            return False
+
+    def _apply_zoom_and_pan(self):
+        """应用缩放和平移参数"""
+        cmds = [
+            {"command": ["set_property", "video-zoom", self.zoom_level]},
+            {"command": ["set_property", "video-pan-x", self.pan_x]},
+            {"command": ["set_property", "video-pan-y", self.pan_y]}
+        ]
+        self._send_mpv_commands(cmds)
+
+    def set_zoom_enabled(self, enabled: bool):
+        """设置该视频控件是否允许使用缩放/平移功能"""
+        self.zoom_enabled = enabled
+        if enabled:
+            if self.is_playing:
+                self._interaction_overlay.setGeometry(0, 0, self._video_frame.width(), self._video_frame.height())
+                self._interaction_overlay.show()
+                self._interaction_overlay.raise_()
+                self._update_cursor()
+        else:
+            self._interaction_overlay.hide()
+            self._zoom_label.hide()
+            self.reset_zoom()
+
+    def reset_zoom(self):
+        """重置缩放和平移"""
+        self.zoom_level = 0.0
+        self.pan_x = 0.0
+        self.pan_y = 0.0
+        if self.is_playing and self.zoom_enabled:
+            self._apply_zoom_and_pan()
+            self._show_zoom_tooltip()
+            self._update_cursor()
+
+    def _update_cursor(self):
+        if self.zoom_level > 0.0:
+            self._interaction_overlay.setCursor(Qt.OpenHandCursor)
+        else:
+            self._interaction_overlay.setCursor(Qt.ArrowCursor)
+
+    def _show_zoom_tooltip(self):
+        if self.zoom_level > 0.0:
+            percentage = int((1.0 + self.zoom_level) * 100)
+            self._zoom_label.setText(f"🔍 放大: {percentage}%")
+            self._zoom_label.adjustSize()
+            self._position_zoom_label()
+            self._zoom_label.show()
+            self._zoom_label.raise_()
+
+            if not hasattr(self, '_zoom_timer'):
+                self._zoom_timer = QTimer(self)
+                self._zoom_timer.setSingleShot(True)
+                self._zoom_timer.timeout.connect(self._zoom_label.hide)
+            self._zoom_timer.start(1500)
+        else:
+            self._zoom_label.hide()
+
+    def _on_overlay_wheel(self, event):
+        if not self.is_playing or not self.zoom_enabled:
+            return
+
+        delta = event.angleDelta().y() / 120.0
+        old_zoom = self.zoom_level
+        self.zoom_level = max(0.0, min(5.0, self.zoom_level + delta * 0.2))
+
+        if self.zoom_level != old_zoom:
+            if self.zoom_level == 0.0:
+                self.pan_x = 0.0
+                self.pan_y = 0.0
+
+            self._apply_zoom_and_pan()
+            self._show_zoom_tooltip()
+            self._update_cursor()
+
+    def _on_overlay_pressed(self, event):
+        if not self.is_playing or not self.zoom_enabled or self.zoom_level == 0.0:
+            return
+
+        if event.button() == Qt.LeftButton:
+            self._is_dragging = True
+            self._drag_start = event.pos()
+            self._start_pan_x = self.pan_x
+            self._start_pan_y = self.pan_y
+            self._interaction_overlay.setCursor(Qt.ClosedHandCursor)
+
+    def _on_overlay_moved(self, event):
+        if not self.is_playing or not self.zoom_enabled or not getattr(self, '_is_dragging', False):
+            return
+
+        dx = event.pos().x() - self._drag_start.x()
+        dy = event.pos().y() - self._drag_start.y()
+
+        width = self._video_frame.width()
+        height = self._video_frame.height()
+
+        if width > 0 and height > 0:
+            # 移动比例需要随着放大倍数进行敏感度折算
+            scale = 1.0 + self.zoom_level
+            self.pan_x = self._start_pan_x + (dx / width) / scale
+            self.pan_y = self._start_pan_y + (dy / height) / scale
+
+            # 限制范围
+            self.pan_x = max(-2.0, min(2.0, self.pan_x))
+            self.pan_y = max(-2.0, min(2.0, self.pan_y))
+
+            self._apply_zoom_and_pan()
+
+    def _on_overlay_released(self, event):
+        self._is_dragging = False
+        if self.is_playing and self.zoom_enabled:
+            self._update_cursor()
+
+    def _on_overlay_double_click(self, event):
+        if not self.is_playing or not self.zoom_enabled:
+            return
+
+        if self.zoom_level > 0.0:
+            self.reset_zoom()
+        else:
+            self.double_clicked.emit(self.index)
 
     def toggle_play(self):
         """切换播放/停止"""
@@ -577,6 +837,12 @@ class VideoWidget(QWidget):
                 background-color: #0078d4;
             }
         """)
+
+        if self.zoom_enabled and self.zoom_level > 0.0:
+            action_reset_zoom = QAction("🔍 重置画面缩放", self)
+            action_reset_zoom.triggered.connect(self.reset_zoom)
+            menu.addAction(action_reset_zoom)
+            menu.addSeparator()
 
         action_reconnect = QAction("🔄 重新连接 (刷新画面)", self)
         action_reconnect.triggered.connect(self.reconnect_with_refresh)

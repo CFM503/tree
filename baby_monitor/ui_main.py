@@ -727,6 +727,7 @@ class MainWindow(QMainWindow):
                 self._grid_layout.addWidget(vw, row, col)
                 vw.show()
                 vw.setParent(self._grid_widget)
+                vw.set_zoom_enabled(False)  # 网格多画面下禁用缩放并重置状态
 
             self._grid_mode = True
             self._video_stack.setCurrentWidget(self._grid_widget)
@@ -755,6 +756,7 @@ class MainWindow(QMainWindow):
                     w.stop()  # 停止隐藏画面的播放进程以释放CPU/GPU/网络资源
             self._single_layout.addWidget(vw)
             vw.show()
+            vw.set_zoom_enabled(True)  # 单画面下允许画面缩放与平移
             self._grid_mode = False
             self._video_stack.setCurrentWidget(self._single_widget)
             self.btn_grid_mode.setStyleSheet(self._toolbar_btn_style(False))
