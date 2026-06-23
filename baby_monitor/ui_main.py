@@ -499,7 +499,7 @@ class MainWindow(QMainWindow):
         self._status_bar.showMessage("请选择宝宝")
 
         # 软件版本号
-        self._status_version = QLabel("v2.6.2-stable")
+        self._status_version = QLabel("v2.6.3-stable")
         self._status_version.setStyleSheet("color: #777; margin-right: 15px; font-weight: bold;")
         self._status_bar.addPermanentWidget(self._status_version)
 
@@ -733,6 +733,16 @@ class MainWindow(QMainWindow):
             self.btn_grid_mode.setStyleSheet(self._toolbar_btn_style(True))
             self.btn_single_mode.setStyleSheet(self._toolbar_btn_style(False))
 
+            # 重新恢复原来需要播放的在线摄像头（如果当前未在播放）
+            for i, cam in enumerate(self.cameras):
+                if i >= self._max_cameras:
+                    break
+                vw = self._video_widgets[i]
+                if not vw.is_playing:
+                    url = cam.get("stream_url", "")
+                    if url and cam.get("Status", 0) == 1 and cam.get("authority", 0) == 1:
+                        vw.play(url)
+
     def _switch_to_single(self, index: int = 0):
         """切换到单画面模式"""
         if self._grid_mode and index < len(self._video_widgets):
@@ -742,6 +752,7 @@ class MainWindow(QMainWindow):
             for w in self._video_widgets:
                 if w != vw:
                     w.hide()
+                    w.stop()  # 停止隐藏画面的播放进程以释放CPU/GPU/网络资源
             self._single_layout.addWidget(vw)
             vw.show()
             self._grid_mode = False
