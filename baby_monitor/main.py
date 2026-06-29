@@ -1,4 +1,4 @@
-"""猴子看护 - 主程序入口 (v2.7.0-stable)"""
+"""猴子看护 - 主程序入口 (v2.7.1-stable)"""
 import os
 import sys
 import logging
