@@ -22,8 +22,6 @@ a = Analysis(
         'api_client',
         'config',
         'ezviz_client',
-        'recorder',
-        'test_login',
         'ui_login',
         'ui_main',
         'video_widget',

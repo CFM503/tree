@@ -27,12 +27,12 @@ DEFAULT_CONFIG = {
 }
 
 
-def _simple_encrypt(text: str) -> str:
-    """Simple base64 obfuscation for local password storage (not security-critical)."""
+def _obfuscate_password(text: str) -> str:
+    """Base64 obfuscation for local password storage. NOT encryption."""
     return base64.b64encode(text.encode("utf-8")).decode("ascii")
 
 
-def _simple_decrypt(encoded: str) -> str:
+def _deobfuscate_password(encoded: str) -> str:
     try:
         return base64.b64decode(encoded.encode("ascii")).decode("utf-8")
     except Exception:
@@ -57,8 +57,8 @@ def save_config(cfg: dict):
 
 
 def get_password(cfg: dict) -> str:
-    return _simple_decrypt(cfg.get("password_encrypted", ""))
+    return _deobfuscate_password(cfg.get("password_encrypted", ""))
 
 
 def set_password(cfg: dict, password: str):
-    cfg["password_encrypted"] = _simple_encrypt(password)
+    cfg["password_encrypted"] = _obfuscate_password(password)

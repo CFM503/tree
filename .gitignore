@@ -1,5 +1,0 @@
-*.apk
-__pycache__/
-*.pyc
-.env
-_response.bin

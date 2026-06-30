@@ -148,7 +148,7 @@ class BBTreeClient:
             "classId": 0,
             "client_type": 1,
             "loginType": 0,
-            "password": self.password,  # 明文密码!
+            "password": self.password,
             "userId": 0,
             "username": self.phone,
             "versionCode": VERSION_CODE,

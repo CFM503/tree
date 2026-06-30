@@ -3,15 +3,18 @@
 基于 mpv.exe 的 PyQt5 视频播放控件，通过 --wid 嵌入到 Qt 窗口。
 支持 H.265/H.264、RTMP/HLS/ezopen 等所有格式。
 """
-import os
-import sys
-import time
-import signal
+import ctypes
+import json
 import logging
-import threading
+import msvcrt
+import os
+import signal
 import subprocess
-from pathlib import Path
+import sys
+import threading
+import time
 from datetime import datetime
+from pathlib import Path
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -464,11 +467,6 @@ class VideoWidget(QWidget):
         """通过 Windows 命名管道给 mpv.exe 发送 JSON IPC 指令 (无需 pywin32)"""
         if not self.is_playing or not self.ipc_pipe:
             return False
-
-        import ctypes
-        import msvcrt
-        import os
-        import json
 
         GENERIC_WRITE = 0x40000000
         OPEN_EXISTING = 3
