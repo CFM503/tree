@@ -18,7 +18,7 @@ from pathlib import Path
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QSizePolicy, QMenu, QAction, QApplication
+    QSizePolicy, QMenu, QAction
 )
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QPixmap, QImage, QMouseEvent, QWheelEvent, QPalette, QColor
@@ -34,6 +34,27 @@ MPV_AVAILABLE = os.path.isfile(MPV_PATH)
 
 if not MPV_AVAILABLE:
     logger.warning("mpv.exe 未找到: %s，视频播放不可用", MPV_PATH)
+
+# 播放进度停滞多久判定为画面卡死（秒）
+STALL_SECONDS = 12.0
+
+# Windows 命名管道 API（显式声明参数/返回值类型，避免 64 位句柄被截断）
+_k32 = ctypes.windll.kernel32
+_k32.GetLastError.argtypes = ()
+_k32.GetLastError.restype = ctypes.c_uint
+_k32.CreateFileW.argtypes = (
+    ctypes.c_wchar_p, ctypes.c_uint, ctypes.c_uint, ctypes.c_void_p,
+    ctypes.c_uint, ctypes.c_uint, ctypes.c_void_p,
+)
+_k32.CreateFileW.restype = ctypes.c_void_p
+_k32.WaitNamedPipeW.argtypes = (ctypes.c_wchar_p, ctypes.c_uint)
+_k32.WaitNamedPipeW.restype = ctypes.c_int
+_k32.PeekNamedPipe.argtypes = (
+    ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint,
+    ctypes.POINTER(ctypes.c_uint), ctypes.POINTER(ctypes.c_uint),
+    ctypes.POINTER(ctypes.c_uint),
+)
+_k32.PeekNamedPipe.restype = ctypes.c_int
 
 
 class VideoInteractionOverlay(QWidget):
@@ -79,9 +100,12 @@ class VideoWidget(QWidget):
     recording_started = pyqtSignal(str)
     recording_stopped = pyqtSignal(str, str)
     stream_expired = pyqtSignal(int)  # 通知主窗口流可能已过期，需要重新获取 URL
+    _async_done = pyqtSignal(object)  # 后台任务完成回调（信号会排队回主线程执行）
 
     def __init__(self, index: int = 0, parent=None):
         super().__init__(parent)
+        # 跨线程回调统一走信号：后台线程没有事件循环，QTimer.singleShot 不会触发
+        self._async_done.connect(self._invoke_callback)
         self.index = index
         self.camera_name = f"摄像头 {index + 1}"
         self.stream_url = ""
@@ -103,6 +127,19 @@ class VideoWidget(QWidget):
         self._loading_hidden = False
         self._health_timer = QTimer(self)
         self._health_timer.timeout.connect(self._check_health)
+
+        # 播放进度监控（JSON-IPC observe playback-time，用于检测“进程活着但画面卡死”）
+        self._ipc_stop = None
+        self._ipc_thread = None
+        self._ipc_connected = False
+        self._ipc_failed = False
+        self._progress_seen = False
+        self._last_time_pos = None
+        self._last_progress_ts = 0.0
+
+        # 截图防重入
+        self._snapshot_busy = False
+        self._recorder_proc = None
 
         # 画面放大和平移状态 (仅在单画面下激活)
         self.zoom_enabled = False
@@ -291,12 +328,19 @@ class VideoWidget(QWidget):
         # 显示加载动画
         self._loading_overlay.show_loading("正在连接...")
         self._loading_hidden = False
-        self._play_start_time = time.time()
+        self._play_start_time = time.monotonic()
+
+        # 重置进度监控状态（每次播放都开一个独立的停止事件，避免旧线程串扰）
+        self._ipc_stop = threading.Event()
+        self._ipc_connected = False
+        self._ipc_failed = False
+        self._progress_seen = False
+        self._last_time_pos = None
+        self._last_progress_ts = time.monotonic()
 
         try:
             # 确保窗口已渲染
             self._video_frame.show()
-            QApplication.processEvents()
 
             wid = int(self._video_frame.winId())
             logger.info("mpv WID: %s, URL: %s", hex(wid), self.stream_url[:60])
@@ -315,10 +359,13 @@ class VideoWidget(QWidget):
                 "--hwdec=auto",
                 "--vo=gpu",
                 "--ao=null",
-                "--cache=no",                         # 禁用缓存以实现最低延迟直播播放
-                "--demuxer-max-bytes=10M",             # 降低缓冲区大小（默认50M）
-                "--demuxer-readahead-secs=0.5",        # 降低预读秒数
-                "--stream-buffer-size=32KiB",          # 降低流输入缓存区大小加快出图
+                # 直播缓冲：HLS 按分段突发下发，缓冲过小会被网络抖动打断导致画面卡顿
+                "--cache=yes",                          # 启用网络缓存（同时启用 cache-pause 补播）
+                "--cache-secs=3",                       # 预缓冲约 3 秒，平滑网络抖动（延迟增加约 3 秒）
+                "--cache-pause=yes",                    # 缓冲耗尽时暂停补播，而不是持续掉帧
+                "--demuxer-max-bytes=50M",              # 解码前向缓冲上限
+                "--demuxer-readahead-secs=3",           # 解码线程预读秒数
+                "--stream-buffer-size=1M",              # 底层流缓冲（默认 128K，网络流适当加大）
                 f"--network-timeout={timeout}",         # 自定义网络连接超时
                 f"--demuxer-lavf-o=timeout={timeout * 1000000}", # FFmpeg底层读取超时 (微秒)
                 self.stream_url,
@@ -342,6 +389,14 @@ class VideoWidget(QWidget):
             self._btn_play.setText("⏸ 停止")
             self._placeholder.setVisible(False)
 
+            # 启动 IPC 进度监控线程（检测画面卡死）
+            self._ipc_thread = threading.Thread(
+                target=self._ipc_reader,
+                args=(self.ipc_pipe, self._ipc_stop),
+                daemon=True,
+            )
+            self._ipc_thread.start()
+
             # 如果缩放交互已启用，展示透明交互遮罩层
             if self.zoom_enabled:
                 self._interaction_overlay.setGeometry(0, 0, self._video_frame.width(), self._video_frame.height())
@@ -358,8 +413,8 @@ class VideoWidget(QWidget):
             self._loading_overlay.set_error(f"播放失败: {e}")
 
     def stop(self):
-        """停止播放（非阻塞：后台清理进程）"""
-        self._health_timer.stop()
+        """停止播放（非阻塞：后台清理进程），录像也会一并停止"""
+        self._stop_mpv()
         self._loading_overlay.hide_loading()
 
         # 隐藏并重置缩放交互界面
@@ -370,6 +425,16 @@ class VideoWidget(QWidget):
         self.zoom_level = 0.0
         self.pan_x = 0.0
         self.pan_y = 0.0
+
+        if self.is_recording:
+            self.stop_recording()
+
+    def _stop_mpv(self):
+        """仅停止 mpv 播放进程并复位播放状态（录像由 ffmpeg 独立维持，不受影响）"""
+        self._health_timer.stop()
+        if self._ipc_stop is not None:
+            self._ipc_stop.set()
+            self._ipc_stop = None
         self.ipc_pipe = ""
         self._is_dragging = False
 
@@ -386,9 +451,6 @@ class VideoWidget(QWidget):
         self.is_playing = False
         self._btn_play.setText("▶ 播放")
 
-        if self.is_recording:
-            self.stop_recording()
-
     @staticmethod
     def _reap_process(proc):
         """后台清理已终止的 mpv 进程"""
@@ -404,40 +466,162 @@ class VideoWidget(QWidget):
             pass
 
     def _check_health(self):
-        """定时检查 mpv 进程健康状态"""
+        """定时检查 mpv 健康状态：进程是否退出、播放进度是否停滞（画面卡死）"""
         if not self.is_playing or not self._mpv_proc:
             return
 
-        elapsed = time.time() - self._play_start_time
+        now = time.monotonic()
+        elapsed = now - self._play_start_time
 
         # 检查进程是否已退出（崩溃/断流）
         ret = self._mpv_proc.poll()
         if ret is not None:
-            logger.warning("mpv 进程退出: %s (code=%s)", self.camera_name, ret)
-            self._mpv_proc = None
-            self.is_playing = False
-            self._btn_play.setText("▶ 播放")
-
-            if self._retry_count < self._max_retries:
-                self._retry_count += 1
-                logger.info("自动重连 %d/%d: %s", self._retry_count, self._max_retries, self.camera_name)
-                self._loading_overlay.show_loading(f"重新连接中 ({self._retry_count}/{self._max_retries})...")
-                # 触发重新获取 URL 的信号，而不是直接用旧 URL 重连
-                self.stream_expired.emit(self.index)
-            else:
-                self._health_timer.stop()
-                self._loading_overlay.set_error("连接中断，点击重试")
+            self._on_player_lost("进程退出 code=%s" % ret)
             return
 
-        # 超时检测：15秒仍未出画面
-        if not self._loading_hidden and elapsed > 15:
-            self._loading_overlay.show_loading("连接较慢，请稍候...")
+        # 画面卡死检测：进程还活着，但播放进度长时间不再推进
+        stall = now - self._last_progress_ts
+        if self._progress_seen and elapsed > STALL_SECONDS + 5 and stall > STALL_SECONDS:
+            self._on_player_lost("画面停滞 %.0f 秒" % stall)
+            return
 
-        # 成功检测：进程存活超过 4 秒，认为已出画面
-        if not self._loading_hidden and elapsed > 4:
-            self._loading_hidden = True
-            self._loading_overlay.hide_loading()
-            self._retry_count = 0  # 重置重连计数
+        # 加载遮罩：优先以“播放进度已推进”作为出画面的证据
+        if not self._loading_hidden:
+            if self._progress_seen:
+                self._loading_hidden = True
+                self._loading_overlay.hide_loading()
+            elif self._ipc_failed or self._ipc_thread_dead():
+                # IPC 进度监控不可用，退回“进程存活 4 秒”判定
+                if elapsed > 4:
+                    self._loading_hidden = True
+                    self._loading_overlay.hide_loading()
+            elif elapsed > 15:
+                self._loading_overlay.show_loading("连接较慢，请稍候...")
+
+    def _ipc_thread_dead(self) -> bool:
+        return self._ipc_thread is None or not self._ipc_thread.is_alive()
+
+    def _on_player_lost(self, reason: str):
+        """mpv 退出或画面卡死：复位播放状态并按需自动重连"""
+        logger.warning("播放中断: %s (%s)", self.camera_name, reason)
+        self._stop_mpv()
+        self._loading_overlay.hide_loading()
+
+        if self._retry_count < self._max_retries:
+            self._retry_count += 1
+            logger.info("自动重连 %d/%d: %s", self._retry_count, self._max_retries, self.camera_name)
+            self._loading_overlay.show_loading(f"重新连接中 ({self._retry_count}/{self._max_retries})...")
+            # 触发重新获取 URL 的信号，而不是直接用旧 URL 重连
+            self.stream_expired.emit(self.index)
+        else:
+            self._loading_overlay.set_error("连接中断，点击重试")
+
+    # ------------------------------------------------------------------
+    # mpv JSON-IPC
+    # ------------------------------------------------------------------
+    def _ipc_reader(self, pipe_name: str, stop_event: threading.Event):
+        """后台线程：连接 mpv 的 JSON-IPC 管道并观察 playback-time。
+
+        用于发现“进程还活着但画面已经卡死”的情况（仅靠 poll() 检测不到）。
+        """
+        # 等待 mpv 创建命名管道。mpv 是启动后才异步创建的，此时调用
+        # WaitNamedPipeW 会立刻返回 ERROR_FILE_NOT_FOUND，因此必须轮询
+        deadline = time.monotonic() + 10.0
+        ready = False
+        last_err = 0
+        while not stop_event.is_set():
+            if _k32.WaitNamedPipeW(pipe_name, 250):
+                ready = True
+                break
+            last_err = _k32.GetLastError()
+            # 2=管道尚不存在 121=等待超时（有实例正在连接中），继续等
+            if last_err not in (0, 2, 121):
+                break
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(0.1)
+        if not ready:
+            if not stop_event.is_set():
+                logger.warning("IPC 管道未就绪(err=%d): %s",
+                               last_err, self.camera_name)
+                self._ipc_failed = True
+            return
+
+        handle = _k32.CreateFileW(
+            pipe_name, 0x80000000 | 0x40000000, 0, None, 3, 0, None)
+        if not handle:
+            logger.warning("打开 IPC 管道失败(err=%d): %s",
+                           _k32.GetLastError(), self.camera_name)
+            self._ipc_failed = True
+            return
+
+        fd = -1
+        try:
+            fd = msvcrt.open_osfhandle(handle, os.O_RDWR)
+            if fd < 0:
+                logger.warning("IPC 句柄转 fd 失败: %s", self.camera_name)
+                self._ipc_failed = True
+                return
+            self._ipc_connected = True
+
+            # 观察播放进度，mpv 每次变化都会推送 property-change 事件
+            os.write(fd, (json.dumps(
+                {"command": ["observe_property", 1, "playback-time"]}) + "\n").encode("utf-8"))
+
+            pending = b""
+            while not stop_event.is_set():
+                avail = ctypes.c_uint(0)
+                if not _k32.PeekNamedPipe(handle, None, 0, None, ctypes.byref(avail), None):
+                    break  # 管道断开：mpv 已退出
+                if avail.value:
+                    chunk = os.read(fd, min(avail.value, 65536))
+                    if not chunk:
+                        break
+                    pending += chunk
+                    while b"\n" in pending:
+                        line, pending = pending.split(b"\n", 1)
+                        self._handle_ipc_message(line, stop_event)
+                else:
+                    if self._mpv_proc is None or self._mpv_proc.poll() is not None:
+                        break
+                    time.sleep(0.2)
+        except Exception as e:
+            logger.debug("IPC 进度监控线程退出: %s", e)
+        finally:
+            if fd >= 0:
+                try:
+                    os.close(fd)  # 关闭 fd 同时关闭其持有的管道句柄
+                except Exception:
+                    pass
+            self._ipc_connected = False
+
+    def _handle_ipc_message(self, line: bytes, stop_event: threading.Event):
+        """解析 mpv 推送的 property-change 事件，记录播放进度的最后推进时间"""
+        if stop_event.is_set():
+            return
+        try:
+            msg = json.loads(line.decode("utf-8", "replace"))
+        except Exception:
+            return
+        if not isinstance(msg, dict) or msg.get("event") != "property-change":
+            return
+        if msg.get("id") != 1:
+            return
+        pos = msg.get("data")
+        if not isinstance(pos, (int, float)):
+            return
+
+        if self._last_time_pos is None:
+            # 首个事件只是基线，之后的数值变化才算真正“画面在推进”
+            self._last_time_pos = float(pos)
+            return
+        if abs(pos - self._last_time_pos) <= 1e-6:
+            return
+
+        self._last_time_pos = float(pos)
+        self._last_progress_ts = time.monotonic()
+        self._progress_seen = True
+        self._retry_count = 0  # 画面正常推进，清零重连计数
 
     def reconnect_with_refresh(self):
         """重新连接并刷新流地址与权限 (带 Token)"""
@@ -463,25 +647,14 @@ class VideoWidget(QWidget):
         y = margin
         self._zoom_label.move(max(margin, x), y)
 
-    def _send_mpv_commands(self, cmds: list) -> bool:
-        """通过 Windows 命名管道给 mpv.exe 发送 JSON IPC 指令 (无需 pywin32)"""
-        if not self.is_playing or not self.ipc_pipe:
+    @staticmethod
+    def _send_commands_to_pipe(pipe_name: str, cmds: list) -> bool:
+        """向指定的 mpv JSON-IPC 管道写入若干条指令 (无需 pywin32)"""
+        if not pipe_name:
             return False
 
-        GENERIC_WRITE = 0x40000000
-        OPEN_EXISTING = 3
-        INVALID_HANDLE_VALUE = -1
-
-        handle = ctypes.windll.kernel32.CreateFileW(
-            self.ipc_pipe,
-            GENERIC_WRITE,
-            0,
-            None,
-            OPEN_EXISTING,
-            0,
-            None
-        )
-        if handle == INVALID_HANDLE_VALUE:
+        handle = _k32.CreateFileW(pipe_name, 0x40000000, 0, None, 3, 0, None)
+        if not handle:
             return False
 
         try:
@@ -494,6 +667,12 @@ class VideoWidget(QWidget):
         except Exception as e:
             logger.error("发送 IPC 命令到 mpv 失败: %s", e)
             return False
+
+    def _send_mpv_commands(self, cmds: list) -> bool:
+        """通过 Windows 命名管道给 mpv.exe 发送 JSON IPC 指令"""
+        if not self.is_playing or not self.ipc_pipe:
+            return False
+        return self._send_commands_to_pipe(self.ipc_pipe, cmds)
 
     def _apply_zoom_and_pan(self):
         """应用缩放和平移参数"""
@@ -698,29 +877,60 @@ class VideoWidget(QWidget):
         self._segment_timer.start(segment_minutes * 60 * 1000)
         logger.info("开始录像: %s, 分段时长: %d 分钟", self._recording_path, segment_minutes)
 
-    def _stop_ffmpeg(self):
-        """停止当前 ffmpeg 进程"""
-        if hasattr(self, '_recorder_proc') and self._recorder_proc:
+    def _invoke_callback(self, callback):
+        """在主线程执行后台任务传回的回调"""
+        if callable(callback):
+            callback()
+
+    def _post_to_main(self, callback):
+        """从任意线程把回调投递到主线程执行（等价于跨线程的 QTimer.singleShot）"""
+        self._async_done.emit(callback)
+
+    def _stop_ffmpeg(self, on_finished=None):
+        """停止当前 ffmpeg 录制进程。
+
+        在后台线程里等待退出（最多 5 秒），避免 ffmpeg 收尾时阻塞 UI 线程；
+        文件真正关闭后回到主线程执行 on_finished 回调。
+        """
+        proc = self._recorder_proc
+        self._recorder_proc = None
+        if not proc:
+            if on_finished:
+                on_finished()
+            return
+
+        def _worker():
             try:
-                self._recorder_proc.communicate(input=b"q", timeout=5)
+                proc.communicate(input=b"q", timeout=5)
             except subprocess.TimeoutExpired:
-                self._recorder_proc.kill()
-                self._recorder_proc.wait(timeout=3)
+                try:
+                    proc.kill()
+                    proc.wait(timeout=3)
+                except Exception:
+                    pass
             except Exception:
                 pass
-            self._recorder_proc = None
+            if on_finished:
+                self._post_to_main(on_finished)
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     def _rotate_recording(self):
-        """自动分段：保存当前文件，开始新文件"""
+        """自动分段：后台保存当前文件，文件关闭后再开始新文件"""
         if not self.is_recording:
             return
 
         saved_path = self._recording_path
-        self._stop_ffmpeg()
-        self.recording_stopped.emit(self.camera_name, saved_path)
-        logger.info("自动分段保存: %s", saved_path)
+        self._stop_ffmpeg(on_finished=lambda: self._start_next_segment(saved_path))
 
-        # 开始新分段
+    def _start_next_segment(self, saved_path: str):
+        """上一段录像文件已关闭（主线程）：刷新录像列表并开始新分段"""
+        logger.info("自动分段保存: %s", saved_path)
+        self.recording_stopped.emit(self.camera_name, saved_path)
+
+        if not self.is_recording:
+            return
+
         self._recording_path = self._generate_recording_path(self._save_dir)
         if self._start_ffmpeg_recording():
             from config import load_config
@@ -729,28 +939,27 @@ class VideoWidget(QWidget):
             self._segment_timer.start(segment_minutes * 60 * 1000)
             logger.info("自动分段开始新录像: %s, 分段时长: %d 分钟", self._recording_path, segment_minutes)
         else:
-            self.is_recording = False
             self._rec_indicator.setVisible(False)
             self._blink_timer.stop()
+            self.is_recording = False
             self._btn_record.setText("⏺ 录像")
             self._btn_record.setStyleSheet(self._button_style())
 
     def stop_recording(self):
-        """停止录像"""
+        """停止录像（ffmpeg 在后台收尾，不阻塞 UI）"""
         if not self.is_recording:
             return
 
-        self._segment_timer.stop()
-        self._stop_ffmpeg()
-
         self.is_recording = False
+        self._segment_timer.stop()
         self._rec_indicator.setVisible(False)
         self._blink_timer.stop()
         self._btn_record.setText("⏺ 录像")
         self._btn_record.setStyleSheet(self._button_style())
 
         saved_path = self._recording_path
-        self.recording_stopped.emit(self.camera_name, saved_path)
+        self._stop_ffmpeg(
+            on_finished=lambda: self.recording_stopped.emit(self.camera_name, saved_path))
         logger.info("停止录像: %s", saved_path)
 
     def toggle_record(self):
@@ -760,9 +969,12 @@ class VideoWidget(QWidget):
         else:
             self.start_recording()
 
+    # ------------------------------------------------------------------
+    # 截图
+    # ------------------------------------------------------------------
     def take_snapshot(self):
-        """截图（使用 ffmpeg 截取当前帧）"""
-        if not self.is_playing or not self.stream_url:
+        """截图：优先截取 mpv 正在播放的画面（不额外拉流），全程在后台执行"""
+        if self._snapshot_busy or not self.is_playing or not self.stream_url:
             return
 
         from config import load_config, RECORDINGS_DIR
@@ -771,9 +983,54 @@ class VideoWidget(QWidget):
         import random, string
         rand = ''.join(random.choices(string.ascii_lowercase + string.digits, k=4))
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"SNAP_{timestamp}_{rand}.jpg"
-        snapshot_path = str(save_dir / filename)
+        snapshot_path = str(save_dir / f"SNAP_{timestamp}_{rand}.jpg")
 
+        self._snapshot_busy = True
+        self._btn_snapshot.setEnabled(False)
+        ipc_pipe = self.ipc_pipe
+        stream_url = self.stream_url
+        threading.Thread(
+            target=self._do_snapshot,
+            args=(snapshot_path, ipc_pipe, stream_url),
+            daemon=True,
+        ).start()
+
+    def _do_snapshot(self, snapshot_path: str, ipc_pipe: str, stream_url: str):
+        saved = False
+
+        # 1) 首选：让 mpv 把当前画面存盘（复用已有连接，不重复拉流）
+        if ipc_pipe:
+            try:
+                if self._send_commands_to_pipe(ipc_pipe, [
+                    {"command": ["screenshot-to-file", snapshot_path, "video"]}
+                ]):
+                    saved = self._wait_for_file(snapshot_path, 5.0)
+            except Exception as e:
+                logger.warning("mpv 截图失败，改用 ffmpeg: %s", e)
+
+        # 2) 兜底：ffmpeg 重新拉流截取一帧
+        if not saved:
+            saved = self._ffmpeg_snapshot(snapshot_path, stream_url)
+
+        # 3) 最终兜底：Qt 抓取控件画面（必须回主线程）
+        self._post_to_main(lambda: self._on_snapshot_done(snapshot_path, saved))
+
+    @staticmethod
+    def _wait_for_file(path: str, timeout: float) -> bool:
+        """等待 mpv 落盘截图文件"""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                if os.path.isfile(path) and os.path.getsize(path) > 0:
+                    return True
+            except OSError:
+                pass
+            time.sleep(0.2)
+        return False
+
+    @staticmethod
+    def _ffmpeg_snapshot(snapshot_path: str, stream_url: str) -> bool:
+        """用 ffmpeg 拉流截取一帧（在后台线程中调用）"""
         try:
             import imageio_ffmpeg
             ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
@@ -784,23 +1041,36 @@ class VideoWidget(QWidget):
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                 startupinfo.wShowWindow = 0
 
-            proc = subprocess.run([
+            subprocess.run([
                 ffmpeg_path, '-y',
-                '-i', self.stream_url,
+                '-i', stream_url,
                 '-frames:v', '1',
                 '-q:v', '2',
                 snapshot_path,
-            ], capture_output=True, timeout=10, startupinfo=startupinfo)
-
-            if os.path.isfile(snapshot_path):
-                logger.info("截图保存: %s", snapshot_path)
-            else:
-                # 备用方案：Qt截图
-                pixmap = self._video_frame.grab()
-                pixmap.save(snapshot_path, "JPEG", 90)
-                logger.info("截图保存(Qt): %s", snapshot_path)
+            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                timeout=10, startupinfo=startupinfo)
+            return os.path.isfile(snapshot_path) and os.path.getsize(snapshot_path) > 0
         except Exception as e:
-            logger.error("截图失败: %s", e)
+            logger.error("ffmpeg 截图失败: %s", e)
+            return False
+
+    def _on_snapshot_done(self, snapshot_path: str, saved: bool):
+        """截图结束（主线程）：恢复按钮并兜底"""
+        self._snapshot_busy = False
+        self._btn_snapshot.setEnabled(True)
+
+        if saved:
+            logger.info("截图保存: %s", snapshot_path)
+            return
+
+        try:
+            pixmap = self._video_frame.grab()
+            if pixmap.save(snapshot_path, "JPEG", 90):
+                logger.info("截图保存(Qt): %s", snapshot_path)
+                return
+        except Exception as e:
+            logger.error("Qt 截图失败: %s", e)
+        logger.error("截图失败: %s", snapshot_path)
 
     def toggle_fullscreen(self):
         """切换全屏"""

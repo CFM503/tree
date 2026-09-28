@@ -327,8 +327,12 @@ class CollapsibleSection(QWidget):
 class MainWindow(QMainWindow):
     """主窗口"""
 
+    _call_in_main = pyqtSignal(object)  # 后台线程回调（信号排队回主线程执行）
+
     def __init__(self, client, children: list, cameras: list, config: dict, parent=None):
         super().__init__(parent)
+        # 后台线程没有事件循环，QTimer.singleShot 不会触发，统一用信号回主线程
+        self._call_in_main.connect(self._invoke_in_main)
         self.client = client
         self.children = children
         self.config = config
@@ -342,6 +346,15 @@ class MainWindow(QMainWindow):
         self._load_thread = None
 
         self._init_ui()
+
+    def _invoke_in_main(self, callback):
+        """在主线程执行后台任务传回的回调"""
+        if callable(callback):
+            callback()
+
+    def _post_to_main(self, callback):
+        """从任意线程把回调投递到主线程执行"""
+        self._call_in_main.emit(callback)
 
     def _init_ui(self):
         self.setWindowTitle("猴子看护")
@@ -477,11 +490,6 @@ class MainWindow(QMainWindow):
         self._grid_layout.setContentsMargins(4, 4, 4, 4)
         self._video_stack.addWidget(self._grid_widget)
 
-        self._single_widget = QWidget()
-        self._single_layout = QVBoxLayout(self._single_widget)
-        self._single_layout.setContentsMargins(0, 0, 0, 0)
-        self._video_stack.addWidget(self._single_widget)
-
         # 占位提示
         self._placeholder = QLabel("← 请在左侧选择宝宝\n\n选择后将自动加载摄像头列表\n双击摄像头即可播放")
         self._placeholder.setAlignment(Qt.AlignCenter)
@@ -499,7 +507,7 @@ class MainWindow(QMainWindow):
         self._status_bar.showMessage("请选择宝宝")
 
         # 软件版本号
-        self._status_version = QLabel("v2.7.3-stable")
+        self._status_version = QLabel("v2.8.0-stable")
         self._status_version.setStyleSheet("color: #777; margin-right: 15px; font-weight: bold;")
         self._status_bar.addPermanentWidget(self._status_version)
 
@@ -701,13 +709,28 @@ class MainWindow(QMainWindow):
             self._grid_layout.addWidget(vw, row, col)
 
     def _play_all(self):
-        """播放所有摄像头"""
+        """播放所有摄像头（错峰启动，避免 6 路同时建立连接造成瞬时卡顿）"""
         for i, cam in enumerate(self.cameras):
             if i >= self._max_cameras:
                 break
             url = cam.get("stream_url", "")
             if url and cam.get("Status", 0) == 1 and cam.get("authority", 0) == 1:
-                self._video_widgets[i].play(url)
+                # 单画面模式下只播当前画面，避免后台偷偷拉取隐藏画面的流
+                if not self._grid_mode and i != self._current_single_index:
+                    continue
+                if i == 0:
+                    self._video_widgets[i].play(url)
+                else:
+                    QTimer.singleShot(
+                        i * 400, lambda idx=i, u=url: self._delayed_play(idx, u))
+
+    def _delayed_play(self, index: int, url: str):
+        """错峰启动的回调：摄像头信息可能已被切换，需二次确认"""
+        if index >= len(self._video_widgets):
+            return
+        vw = self._video_widgets[index]
+        if vw.stream_url == url and not vw.is_playing:
+            vw.play(url)
 
     def _stop_all(self):
         """停止所有播放"""
@@ -716,51 +739,57 @@ class MainWindow(QMainWindow):
 
     def _switch_to_grid(self):
         """切换到多画面模式"""
-        if not self._grid_mode:
-            single_vw = self._single_layout.itemAt(0)
-            if single_vw:
-                self._single_layout.removeItem(single_vw)
+        if self._grid_mode:
+            return
 
-            for i, vw in enumerate(self._video_widgets):
-                row = i // 3
-                col = i % 3
-                self._grid_layout.addWidget(vw, row, col)
-                vw.show()
-                vw.setParent(self._grid_widget)
-                vw.set_zoom_enabled(False)  # 网格多画面下禁用缩放并重置状态
+        # 始终在同一个父控件内重排：重新 setParent 会销毁并重建原生窗口，
+        # 使 mpv --wid 绑定的句柄失效（画面花屏/冻住）
+        for i, vw in enumerate(self._video_widgets):
+            self._grid_layout.removeWidget(vw)
+            vw.set_zoom_enabled(False)  # 网格多画面下禁用缩放并重置状态
+            vw.show()
+            self._grid_layout.addWidget(vw, i // 3, i % 3, 1, 1)
 
-            self._grid_mode = True
-            self._video_stack.setCurrentWidget(self._grid_widget)
-            self.btn_grid_mode.setStyleSheet(self._toolbar_btn_style(True))
-            self.btn_single_mode.setStyleSheet(self._toolbar_btn_style(False))
+        self._grid_mode = True
+        self._video_stack.setCurrentWidget(self._grid_widget)
+        self.btn_grid_mode.setStyleSheet(self._toolbar_btn_style(True))
+        self.btn_single_mode.setStyleSheet(self._toolbar_btn_style(False))
 
-            # 重新恢复原来需要播放的在线摄像头（如果当前未在播放）
-            for i, cam in enumerate(self.cameras):
-                if i >= self._max_cameras:
-                    break
-                vw = self._video_widgets[i]
-                if not vw.is_playing:
-                    url = cam.get("stream_url", "")
-                    if url and cam.get("Status", 0) == 1 and cam.get("authority", 0) == 1:
-                        vw.play(url)
+        # 重新恢复原来需要播放的在线摄像头（单画面模式下已停止）
+        for i, cam in enumerate(self.cameras):
+            if i >= self._max_cameras:
+                break
+            vw = self._video_widgets[i]
+            if not vw.is_playing:
+                url = cam.get("stream_url", "")
+                if url and cam.get("Status", 0) == 1 and cam.get("authority", 0) == 1:
+                    vw.play(url)
 
     def _switch_to_single(self, index: int = 0):
         """切换到单画面模式"""
-        if self._grid_mode and index < len(self._video_widgets):
-            self._current_single_index = index
-            vw = self._video_widgets[index]
-            self._grid_layout.removeWidget(vw)
-            for w in self._video_widgets:
-                if w != vw:
-                    w.hide()
+        if not self._grid_mode or index >= len(self._video_widgets):
+            return
+
+        self._current_single_index = index
+        vw = self._video_widgets[index]
+        rows = (self._max_cameras + 2) // 3
+
+        for w in self._video_widgets:
+            self._grid_layout.removeWidget(w)
+            if w is vw:
+                w.show()
+            else:
+                if w.is_playing:
                     w.stop()  # 停止隐藏画面的播放进程以释放CPU/GPU/网络资源
-            self._single_layout.addWidget(vw)
-            vw.show()
-            vw.set_zoom_enabled(True)  # 单画面下允许画面缩放与平移
-            self._grid_mode = False
-            self._video_stack.setCurrentWidget(self._single_widget)
-            self.btn_grid_mode.setStyleSheet(self._toolbar_btn_style(False))
-            self.btn_single_mode.setStyleSheet(self._toolbar_btn_style(True))
+                w.hide()
+
+        # 目标画面铺满整个网格（同一父控件内移动，不销毁 mpv 绑定的窗口）
+        self._grid_layout.addWidget(vw, 0, 0, rows, 3)
+        vw.set_zoom_enabled(True)  # 单画面下允许画面缩放与平移
+        self._grid_mode = False
+        self._video_stack.setCurrentWidget(self._grid_widget)
+        self.btn_grid_mode.setStyleSheet(self._toolbar_btn_style(False))
+        self.btn_single_mode.setStyleSheet(self._toolbar_btn_style(True))
 
     def _on_video_double_click(self, index: int):
         """双击视频切换全屏/多画面"""
@@ -865,7 +894,8 @@ class MainWindow(QMainWindow):
                     cam["stream_url"] = new_url
                     logger.info("流地址刷新成功: %s -> %s...", cam.get("ChannelName", ""), new_url[:60])
                     # 在主线程调用播放
-                    QTimer.singleShot(0, lambda: self._video_widgets[index].play(new_url))
+                    self._post_to_main(
+                        lambda: self._video_widgets[index].play(new_url))
                 else:
                     logger.warning("刷新流地址最终失败: %s", cam.get("ChannelName", ""))
             except Exception as e:
